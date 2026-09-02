@@ -12,13 +12,23 @@
 	(not a custom rig) and stops the player scrolling back out to third
 	person. On its own that is NOT full FPS mouselook, though: the mouse
 	cursor stays free (visible, click-to-interact) unless MouseBehavior is
-	also set to LockCenter - without that, moving the mouse does nothing to
-	the camera at all, which reads as "the mouse is stuck/frozen", and the
-	cursor never disappears. This shipped once (CameraMode set, MouseBehavior
-	never touched), so this script re-asserts LockCenter every frame rather
-	than once: some other system freeing the mouse (a ProximityPrompt's UI,
-	Roblox's own GuiService reacting to a GuiObject) would otherwise win
-	silently and there would be no way to tell from here that it had.
+	also set to LockCenter.
+
+	IMPORTANT: only assign MouseBehavior when it is not already LockCenter.
+	The first version of this script reassigned it unconditionally every
+	RenderStepped frame, and that made things worse, not better: reassigning
+	MouseBehavior to the SAME value it already holds still re-arms the lock
+	from the engine's point of view, which resets whatever it uses internally
+	to track "how far has the mouse moved since the lock was established" -
+	so every single frame's rotation was being thrown away before the camera
+	script could consume it. That reads as exactly what it was reported as:
+	the camera stuck fast, worst right where a ProximityPrompt is on screen
+	(which is exactly when something else - Roblox's own camera module -
+	is most likely to be touching MouseBehavior itself, so this script's
+	unconditional reassignment fought it on every one of those frames too).
+	Setting it only on an actual change avoids resetting that state when
+	nothing needs correcting, while still reclaiming the lock the moment
+	something else releases it.
 ]]
 
 local Players = game:GetService("Players")
@@ -39,20 +49,20 @@ applyFirstPerson()
 -- one spawn, but nothing here assumes that stays true forever.
 player.CharacterAdded:Connect(applyFirstPerson)
 
--- Keeps the mouse locked to the centre of the screen (hidden cursor, every
--- mouse move rotates the camera) for as long as this is running, i.e. the
--- whole shift. Re-set every frame instead of once: if anything else resets
--- MouseBehavior back to Default, this claims it back on the very next frame
--- rather than leaving the player stuck with a free, visible cursor and no
--- way to look around.
---
--- Skipped while Roblox's own Esc menu is open (GuiService.MenuIsOpen): that
--- menu needs a free, visible cursor to click its own buttons, and fighting
--- it every frame would make it unusable.
+-- Checked every frame, but only ever WRITES MouseBehavior/MouseIconEnabled
+-- when they have actually drifted from what first person wants - see the
+-- note above for why an unconditional write, even to the same value, breaks
+-- mouselook. Skipped entirely while Roblox's own Esc menu is open
+-- (GuiService.MenuIsOpen): that menu needs a free, visible cursor to click
+-- its own buttons.
 RunService.RenderStepped:Connect(function()
 	if GuiService.MenuIsOpen then
 		return
 	end
-	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
-	UserInputService.MouseIconEnabled = false
+	if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+	end
+	if UserInputService.MouseIconEnabled then
+		UserInputService.MouseIconEnabled = false
+	end
 end)
