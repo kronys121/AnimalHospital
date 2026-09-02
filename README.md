@@ -5,17 +5,24 @@ Roblox-игра по мастер-роадмапу из `docs/roadmap.md`. Со�
 
 ## Текущее состояние
 
-Этап 1: каркас больницы построен, есть `RoomRegistry` с четырьмя кабинетами
-на заглушках.
+Этап 2: больница построена, пациенты приходят, их можно сфотографировать,
+зарегистрировать и отправить в палату. Кабинеты пока на заглушках.
 
 ## Как запустить
 
 1. Открыть место в Roblox Studio.
-2. В `ServerScriptService` создать `Script` (тип Server) и вставить в него
-   целиком содержимое `src/server/BuildHospital.server.lua`.
-3. В `ReplicatedStorage` создать папку `Shared`, в ней `ModuleScript` с именем
-   `RoomRegistry`, и вставить в него `src/shared/RoomRegistry.lua`.
-4. Нажать Play.
+2. В `ReplicatedStorage` создать папку `Shared`, в ней два `ModuleScript`:
+   - `RoomRegistry` ← `src/shared/RoomRegistry.lua`
+   - `PatientData` ← `src/shared/PatientData.lua`
+3. В `ServerScriptService` создать два `Script` (тип Server):
+   - `BuildHospital` ← `src/server/BuildHospital.server.lua`
+   - `ShiftServer` ← `src/server/ShiftServer.server.lua`
+4. В `StarterPlayer` → `StarterPlayerScripts` создать `LocalScript`
+   `ReceptionClient` ← `src/client/ReceptionClient.client.lua`
+5. Нажать Play.
+
+Имена инстансов важны: скрипты находят друг друга по ним. RemoteEvent'ы
+сервер создаёт сам, руками их заводить не нужно.
 
 Больше ничего делать не нужно: скрипт сам строит всю больницу при старте сервера.
 Старая `Workspace.Hospital` и лишние `SpawnLocation` (в том числе стандартный
@@ -42,11 +49,15 @@ default.project.json   проект Rojo 7 (src маппится в ReplicatedSt
 docs/roadmap.md        мастер-роадмап
 docs/stage-0-layout.md планировка и координаты этапа 0
 docs/stage-1-room-registry.md  реестр кабинетов, API и подмена заглушек
+docs/stage-2-patients.md       пациенты, фотография, цикл регистрации
 src/shared             ModuleScript'ы в ReplicatedStorage.Shared
   RoomRegistry.lua          реестр лечебных кабинетов
+  PatientData.lua           генератор пациентов и правила решения
 src/server             скрипты в ServerScriptService.Server
   BuildHospital.server.lua  строит больницу при запуске игры
+  ShiftServer.server.lua    приход пациентов и приём на ресепшене
 src/client             скрипты в StarterPlayer.StarterPlayerScripts.Client
+  ReceptionClient.client.lua  карточка регистрации с фотографией
 ```
 
 ## RoomRegistry (этап 1)
@@ -58,10 +69,24 @@ src/client             скрипты в StarterPlayer.StarterPlayerScripts.Clie
 одним вызовом `setHandler`, остальной код при этом не меняется. Подробности и
 API - в `docs/stage-1-room-registry.md`.
 
-После постройки здания скрипт сам прогоняет по одному тестовому пациенту через
-все четыре кабинета и печатает исходы в Output.
+## Пациенты (этап 2)
+
+Пациент выходит из уличного входа, идёт через лобби к стойке и ждёт решения.
+У стойки открывается карточка регистрации: снимок, имя, вид, кнопки
+«Впустить» и «Отклонить».
+
+Фотография - это замороженный клон модели пациента. Признак «слишком много
+зубов» на снимке виден, а «дёргается» и «неправильный голос» - нет: они
+проявляются только вживую у стойки. Примерно половина аномалий ловится фото,
+половина требует понаблюдать.
+
+Ответы (`isAnomaly`, признаки, верный препарат) не покидают сервер, решение
+проверяется там же. Впущенный обычный пациент уходит через коридор в свободный
+кабинет и лечится через `RoomRegistry`. Подробности - в
+`docs/stage-2-patients.md`.
 
 ## Дальше
 
-Этап 2: `PatientData` - генератор пациента (имя, признаки аномалии, верный
-препарат).
+Этап 4: Sanity 0-100 с полоской в UI, таймер смены на 5 минут, экран
+результатов. Сейчас за ошибку нет никаких последствий, кроме разбора в
+баннере.

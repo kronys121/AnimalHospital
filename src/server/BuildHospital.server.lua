@@ -440,8 +440,8 @@ local function buildReceptionFurniture(parent, room)
 	newPart(
 		"ReceptionDesk",
 		parent,
-		Vector3.new(2, 4, 22),
-		CFrame.new(deskX, BASE_Y + 2, room.center.Z),
+		Vector3.new(2, 3, 22),
+		CFrame.new(deskX, BASE_Y + 1.5, room.center.Z),
 		Color3.fromRGB(120, 96, 74),
 		Enum.Material.Wood
 	)
@@ -449,8 +449,8 @@ local function buildReceptionFurniture(parent, room)
 	local window = newPart(
 		"ReceptionWindow",
 		parent,
-		Vector3.new(2, 5, 22),
-		CFrame.new(deskX, BASE_Y + 6.5, room.center.Z),
+		Vector3.new(2, 6, 22),
+		CFrame.new(deskX, BASE_Y + 6, room.center.Z),
 		Color3.fromRGB(200, 225, 235),
 		Enum.Material.Glass
 	)
@@ -682,6 +682,10 @@ local function build()
 		table.insert(built, room.id)
 	end
 
+	-- Set last: ShiftServer waits on this attribute rather than on the model
+	-- itself, which appears in Workspace before its rooms are filled in.
+	hospital:SetAttribute("Ready", true)
+
 	print(("[Stage 0] Hospital built. Rooms: %s"):format(table.concat(built, ", ")))
 	return hospital
 end
@@ -690,10 +694,11 @@ end
 -- Stage 1 check
 --------------------------------------------------------------------------------
 
--- Sends one dummy patient into every registered room and prints the results,
--- so the Output window shows the room wiring works end to end. Set to false
--- once stage 3 starts routing real patients.
-local RUN_ROOM_REGISTRY_CHECK = true
+-- Sends one dummy patient into every registered room and prints the results.
+-- Off since stage 2: ShiftServer routes real patients now, and the dummies
+-- would occupy all four rooms for the first five seconds of the shift. Set it
+-- back to true to check the registry wiring on its own.
+local RUN_ROOM_REGISTRY_CHECK = false
 
 local function runRoomRegistryCheck()
 	if not RUN_ROOM_REGISTRY_CHECK then
