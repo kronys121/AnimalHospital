@@ -71,7 +71,20 @@ src/client              скрипты в StarterPlayer.StarterPlayerScripts.Cli
   ReceptionClient.client.lua  информационная карточка у стойки
   FirstPersonCamera.client.lua  вид от первого лица
   TreatmentHud.client.lua       таймер выбора препарата на экране
+tools/check-globals.sh  ищет обращения к локальным переменным выше их объявления
 ```
+
+## Проверка кода без Studio
+
+```
+luac5.4 -p src/server/*.lua src/shared/*.lua src/client/*.lua   # синтаксис
+./tools/check-globals.sh                                        # см. ниже
+```
+
+`luac -p` не ловит обращение к локальной переменной выше её собственного
+объявления: в Lua такое имя молча становится глобальным (`nil`), и падает уже
+в рантайме. Один такой баг доехал до Studio, поэтому на него есть отдельная
+проверка по байт-коду.
 
 ## RoomRegistry (этап 1)
 

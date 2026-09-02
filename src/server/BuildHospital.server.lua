@@ -492,11 +492,16 @@ local function buildReceptionFurniture(parent, room)
 		0.3
 	)
 
+	-- Computer desk top height, for the monitor standing on it. Declared
+	-- before its first use: a local declared further down would leave the
+	-- reference above resolving to a nil global instead.
+	local computerDeskTopY = 2.4
+
 	local computerDesk = newPart(
 		"ComputerDesk",
 		parent,
 		Vector3.new(3, 2.4, 3),
-		CFrame.new(-38, BASE_Y + 1.2, deskZ - 6),
+		CFrame.new(-38, BASE_Y + computerDeskTopY / 2, deskZ - 6),
 		Color3.fromRGB(120, 96, 74),
 		Enum.Material.Wood
 	)
@@ -509,7 +514,6 @@ local function buildReceptionFurniture(parent, room)
 		Enum.Material.SmoothPlastic
 	)
 	newPrompt(computerDesk, "ComputerPrompt", "Оформить карточку", "Компьютер", 8)
-	local computerDeskTopY = 2.4
 
 	local printer = newPart(
 		"Printer",
