@@ -497,6 +497,9 @@ local function buildReceptionFurniture(parent, room)
 	-- reference above resolving to a nil global instead.
 	local computerDeskTopY = 2.4
 
+	-- Not collidable: the player has to stand right up against these to reach
+	-- their prompts, and a solid box there is exactly what makes a first-person
+	-- character's camera judder against the collision instead of settling.
 	local computerDesk = newPart(
 		"ComputerDesk",
 		parent,
@@ -505,7 +508,8 @@ local function buildReceptionFurniture(parent, room)
 		Color3.fromRGB(120, 96, 74),
 		Enum.Material.Wood
 	)
-	newPart(
+	computerDesk.CanCollide = false
+	local computerMonitor = newPart(
 		"ComputerMonitor",
 		parent,
 		Vector3.new(1.8, 1.4, 0.2),
@@ -513,6 +517,7 @@ local function buildReceptionFurniture(parent, room)
 		Color3.fromRGB(20, 20, 24),
 		Enum.Material.SmoothPlastic
 	)
+	computerMonitor.CanCollide = false
 	newPrompt(computerDesk, "ComputerPrompt", "Оформить карточку", "Компьютер", 8)
 
 	local printer = newPart(
@@ -523,6 +528,7 @@ local function buildReceptionFurniture(parent, room)
 		Color3.fromRGB(220, 220, 216),
 		Enum.Material.SmoothPlastic
 	)
+	printer.CanCollide = false
 	newPrompt(printer, "PrinterPrompt", "Забрать карточку", "Принтер", 8)
 	-- Sits on top of the printer (Y = printer centre 1.8 + half its 1.6
 	-- thickness = 2.6), not on the floor.
@@ -594,7 +600,11 @@ local function buildTreatmentMachine(parent, room)
 	local outward = OUTWARD[room.doors[1].side]
 	local machineCenter = backOfRoom(room, 8)
 
-	newPart(
+	-- Not collidable, same reason as the reception desk-top equipment: the
+	-- buttons sit only 2 studs off its face, so a solid cabinet there is what
+	-- a first-person character's camera would judder against while reaching
+	-- for them.
+	local cabinet = newPart(
 		"TreatmentCabinet",
 		parent,
 		Vector3.new(8, 6, 2.5),
@@ -602,6 +612,7 @@ local function buildTreatmentMachine(parent, room)
 		Color3.fromRGB(210, 214, 218),
 		Enum.Material.Metal
 	)
+	cabinet.CanCollide = false
 
 	-- Buttons sit clear of the cabinet's front face (half-depth 1.25) plus
 	-- their own half-depth (0.3), with a small margin, towards the door so a
@@ -637,10 +648,19 @@ end
 
 -- One simple themed prop per room, standing between the door and the
 -- machine, so each room still looks like what its sign says even though the
--- interactive part (the medicine machine) is identical for now.
+-- interactive part (the medicine machine) is identical for now. All are
+-- decorative and not collidable: none needs to be a real physical obstacle,
+-- and being solid only risks the same close-range camera judder as the
+-- equipment above, since the player walks right past them on the way in.
+local function newDecor(name, parent, size, cframe, color, material)
+	local part = newPart(name, parent, size, cframe, color, material)
+	part.CanCollide = false
+	return part
+end
+
 local function buildRoomProp(parent, room)
 	if room.id == "BasicMedical" then
-		newPart(
+		newDecor(
 			"ExamTable",
 			parent,
 			Vector3.new(2, 2.4, 5),
@@ -649,7 +669,7 @@ local function buildRoomProp(parent, room)
 			Enum.Material.SmoothPlastic
 		)
 	elseif room.id == "XRay" then
-		newPart(
+		newDecor(
 			"XRayArm",
 			parent,
 			Vector3.new(1, 6, 1),
@@ -657,7 +677,7 @@ local function buildRoomProp(parent, room)
 			Color3.fromRGB(180, 184, 190),
 			Enum.Material.Metal
 		)
-		newPart(
+		newDecor(
 			"XRayPanel",
 			parent,
 			Vector3.new(3, 3, 0.4),
@@ -666,7 +686,7 @@ local function buildRoomProp(parent, room)
 			Enum.Material.Metal
 		)
 	elseif room.id == "HeartMonitor" then
-		newPart(
+		newDecor(
 			"MonitorBed",
 			parent,
 			Vector3.new(2.4, 1.6, 5.5),
@@ -674,7 +694,7 @@ local function buildRoomProp(parent, room)
 			Color3.fromRGB(225, 228, 230),
 			Enum.Material.SmoothPlastic
 		)
-		newPart(
+		newDecor(
 			"MonitorScreen",
 			parent,
 			Vector3.new(1.6, 1.4, 0.3),
@@ -683,7 +703,7 @@ local function buildRoomProp(parent, room)
 			Enum.Material.Neon
 		)
 	elseif room.id == "Surgery" then
-		newPart(
+		newDecor(
 			"SurgeryTable",
 			parent,
 			Vector3.new(2.4, 2, 5.5),
@@ -691,7 +711,7 @@ local function buildRoomProp(parent, room)
 			Color3.fromRGB(210, 214, 218),
 			Enum.Material.Metal
 		)
-		newPart(
+		newDecor(
 			"SurgeryLamp",
 			parent,
 			Vector3.new(2, 0.6, 2),

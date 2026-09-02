@@ -506,39 +506,69 @@ local function sendFeedback(player, text)
 	remotes.Feedback:FireClient(player, text)
 end
 
--- Same framing technique the client's photo preview used: aim from the
+-- The photo/card parts are flat and thin (built to lie on the desk, shown on
+-- their Top face), but PickupSystem holds an item in front of the player's
+-- Head with no extra rotation, so while held it faces whichever way the
+-- player happens to be looking, not necessarily up. Rather than guess that
+-- rotation, buildPhotoItem/buildCardItem put the same display on three faces
+-- (Top, Front, Back), so one of them faces the camera in both poses. These
+-- helpers loop over every SurfaceGui on the part rather than assuming one.
+
+-- Same framing technique the client's old photo preview used: aim from the
 -- model's own LookVector so the animal faces the shot whichever way it
 -- happens to be standing.
-local function renderPhoto(viewport, patientModel)
-	viewport:ClearAllChildren()
-	local camera = Instance.new("Camera")
-	camera.Parent = viewport
-	viewport.CurrentCamera = camera
+local function renderPhoto(part, patientModel)
+	for _, gui in ipairs(part:GetChildren()) do
+		if gui:IsA("SurfaceGui") then
+			local viewport = gui:FindFirstChildOfClass("ViewportFrame")
+			if viewport then
+				viewport:ClearAllChildren()
+				local camera = Instance.new("Camera")
+				camera.Parent = viewport
+				viewport.CurrentCamera = camera
 
-	local clone = patientModel:Clone()
-	for _, descendant in ipairs(clone:GetDescendants()) do
-		if descendant:IsA("BillboardGui") then
-			descendant:Destroy()
+				local clone = patientModel:Clone()
+				for _, descendant in ipairs(clone:GetDescendants()) do
+					if descendant:IsA("BillboardGui") then
+						descendant:Destroy()
+					end
+				end
+				clone.Parent = viewport
+
+				local pivot = clone:GetPivot()
+				local _, size = clone:GetBoundingBox()
+				local distance = math.max(size.X, size.Y, size.Z) * 1.9
+				local target = pivot.Position + Vector3.new(0, size.Y * 0.12, 0)
+				local eye = target
+					+ pivot.LookVector * distance
+					+ pivot.RightVector * (distance * 0.28)
+					+ Vector3.new(0, size.Y * 0.18, 0)
+				camera.CFrame = CFrame.lookAt(eye, target)
+			end
 		end
 	end
-	clone.Parent = viewport
-
-	local pivot = clone:GetPivot()
-	local _, size = clone:GetBoundingBox()
-	local distance = math.max(size.X, size.Y, size.Z) * 1.9
-	local target = pivot.Position + Vector3.new(0, size.Y * 0.12, 0)
-	local eye = target + pivot.LookVector * distance + pivot.RightVector * (distance * 0.28) + Vector3.new(0, size.Y * 0.18, 0)
-	camera.CFrame = CFrame.lookAt(eye, target)
 end
 
 local function clearPhoto()
-	local viewport = photoItem:FindFirstChildOfClass("SurfaceGui"):FindFirstChildOfClass("ViewportFrame")
-	viewport:ClearAllChildren()
+	for _, gui in ipairs(photoItem:GetChildren()) do
+		if gui:IsA("SurfaceGui") then
+			local viewport = gui:FindFirstChildOfClass("ViewportFrame")
+			if viewport then
+				viewport:ClearAllChildren()
+			end
+		end
+	end
 end
 
 local function setCardText(text)
-	local gui = cardItem:FindFirstChildOfClass("SurfaceGui")
-	gui.Text.Text = text
+	for _, gui in ipairs(cardItem:GetChildren()) do
+		if gui:IsA("SurfaceGui") then
+			local label = gui:FindFirstChild("Text")
+			if label then
+				label.Text = text
+			end
+		end
+	end
 end
 
 -- Reset before each new patient: force both items back to the desk (even if
@@ -549,12 +579,12 @@ local function resetRegistration(patient, model)
 
 	PickupSystem.placeDown(photoItem)
 	clearPhoto()
-	photoItem.PickupPrompt.Enabled = false
+	PickupSystem.setAvailable(photoItem, false)
 
 	PickupSystem.placeDown(cardItem)
 	cardItem.Transparency = 1
 	cardItem.CanCollide = false
-	cardItem.PickupPrompt.Enabled = false
+	PickupSystem.setAvailable(cardItem, false)
 end
 
 local function clearSession()
@@ -608,9 +638,9 @@ local function connectRegistrationPrompts()
 		if not session then
 			return
 		end
-		renderPhoto(photoItem:FindFirstChildOfClass("SurfaceGui"):FindFirstChildOfClass("ViewportFrame"), session.model)
+		renderPhoto(photoItem, session.model)
 		session.photographed = true
-		photoItem.PickupPrompt.Enabled = true
+		PickupSystem.setAvailable(photoItem, true)
 		remotes.PhotoTaken:FireAllClients(session.patient.id)
 	end)
 
@@ -650,7 +680,7 @@ local function connectRegistrationPrompts()
 		setCardText(session.patient.name)
 		cardItem.Transparency = 0
 		cardItem.CanCollide = false
-		cardItem.PickupPrompt.Enabled = true
+		PickupSystem.setAvailable(cardItem, true)
 	end)
 
 	world.rejectPrompt.Triggered:Connect(function(_player)
@@ -664,9 +694,12 @@ end
 -- The two carryable items share this pickup/place wiring: a Pickup prompt
 -- that succeeds through PickupSystem, and a Place prompt that always
 -- succeeds (you can put down whatever you are holding, wherever you are).
+-- PickupSystem.register is handed both prompts and keeps exactly one of them
+-- enabled from then on - this file never touches ProximityPrompt.Enabled on
+-- either of them again, since doing that from two places (a caller poking
+-- .Enabled directly *and* PickupSystem reacting to hold state) is exactly
+-- what let both prompts end up enabled together before.
 local function wirePickup(part, homeCFrame)
-	PickupSystem.register(part, homeCFrame)
-
 	local pickupPrompt = Instance.new("ProximityPrompt")
 	pickupPrompt.Name = "PickupPrompt"
 	pickupPrompt.ActionText = "Взять"
@@ -674,9 +707,6 @@ local function wirePickup(part, homeCFrame)
 	pickupPrompt.MaxActivationDistance = 8
 	pickupPrompt.RequiresLineOfSight = false
 	pickupPrompt.Parent = part
-	pickupPrompt.Triggered:Connect(function(player)
-		PickupSystem.pickUp(part, player)
-	end)
 
 	local placePrompt = Instance.new("ProximityPrompt")
 	placePrompt.Name = "PlacePrompt"
@@ -685,13 +715,35 @@ local function wirePickup(part, homeCFrame)
 	placePrompt.MaxActivationDistance = 8
 	placePrompt.RequiresLineOfSight = false
 	placePrompt.Parent = part
+
+	PickupSystem.register(part, homeCFrame, { pickup = pickupPrompt, place = placePrompt })
+
+	pickupPrompt.Triggered:Connect(function(player)
+		PickupSystem.pickUp(part, player)
+	end)
 	placePrompt.Triggered:Connect(function(player)
 		if PickupSystem.isHeldBy(part, player) then
 			PickupSystem.placeDown(part)
 		end
 	end)
+end
 
-	return pickupPrompt, placePrompt
+-- Top: visible resting flat on the desk. Front/Back: whichever one ends up
+-- facing the player is visible while held, since a held item inherits the
+-- holder's Head orientation with no extra rotation applied (see the note
+-- above renderPhoto) - putting the same content on both sides means it does
+-- not matter which one that turns out to be.
+local DISPLAY_FACES = { Enum.NormalId.Top, Enum.NormalId.Front, Enum.NormalId.Back }
+
+local function addDisplayFace(part, face)
+	local gui = Instance.new("SurfaceGui")
+	gui.Name = "Display"
+	gui.Face = face
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = 50
+	gui.LightInfluence = 0
+	gui.Parent = part
+	return gui
 end
 
 local function buildPhotoItem()
@@ -705,21 +757,16 @@ local function buildPhotoItem()
 	part.Material = Enum.Material.SmoothPlastic
 	part.Parent = Workspace
 
-	local gui = Instance.new("SurfaceGui")
-	gui.Name = "Display"
-	gui.Face = Enum.NormalId.Top
-	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-	gui.PixelsPerStud = 50
-	gui.LightInfluence = 0
-	gui.Parent = part
+	for _, face in ipairs(DISPLAY_FACES) do
+		local gui = addDisplayFace(part, face)
+		local viewport = Instance.new("ViewportFrame")
+		viewport.Size = UDim2.fromScale(1, 1)
+		viewport.BackgroundColor3 = Color3.fromRGB(30, 30, 34)
+		viewport.Parent = gui
+	end
 
-	local viewport = Instance.new("ViewportFrame")
-	viewport.Size = UDim2.fromScale(1, 1)
-	viewport.BackgroundColor3 = Color3.fromRGB(30, 30, 34)
-	viewport.Parent = gui
-
-	local photoPickupPrompt = wirePickup(part, world.photoHome)
-	photoPickupPrompt.Enabled = false
+	wirePickup(part, world.photoHome)
+	PickupSystem.setAvailable(part, false)
 	return part
 end
 
@@ -735,26 +782,21 @@ local function buildCardItem()
 	part.Transparency = 1
 	part.Parent = Workspace
 
-	local gui = Instance.new("SurfaceGui")
-	gui.Name = "Display"
-	gui.Face = Enum.NormalId.Top
-	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-	gui.PixelsPerStud = 50
-	gui.LightInfluence = 0
-	gui.Parent = part
+	for _, face in ipairs(DISPLAY_FACES) do
+		local gui = addDisplayFace(part, face)
+		local label = Instance.new("TextLabel")
+		label.Name = "Text"
+		label.Size = UDim2.fromScale(1, 1)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.GothamBold
+		label.TextScaled = true
+		label.TextColor3 = Color3.fromRGB(20, 20, 24)
+		label.Text = ""
+		label.Parent = gui
+	end
 
-	local label = Instance.new("TextLabel")
-	label.Name = "Text"
-	label.Size = UDim2.fromScale(1, 1)
-	label.BackgroundTransparency = 1
-	label.Font = Enum.Font.GothamBold
-	label.TextScaled = true
-	label.TextColor3 = Color3.fromRGB(20, 20, 24)
-	label.Text = ""
-	label.Parent = gui
-
-	local pickupPrompt = wirePickup(part, world.cardHome)
-	pickupPrompt.Enabled = false
+	wirePickup(part, world.cardHome)
+	PickupSystem.setAvailable(part, false)
 	return part
 end
 
