@@ -13,6 +13,13 @@
 	The hospital is rebuilt on every server start, so editing it by hand in
 	Studio is pointless: change the ROOMS table below instead.
 
+	Floor plan is a T: the street entrance and Lobby sit south of the main
+	corridor and form the stem of the T; the corridor is the crossbar, with
+	exam rooms and the break room flanking it left and right. Patients walk
+	in from the south, see Reception on their left as they cross the Lobby,
+	then continue straight ahead into the corridor junction, where rooms
+	branch left and right.
+
 	Structure produced (every room is identical in shape, so stage 1
 	RoomRegistry can walk them generically):
 
@@ -28,10 +35,6 @@
 				BreakRoom       Model
 
 	Each room model carries attributes: RoomId, DisplayName, RoomNumber (optional).
-
-	Patient flow: patients appear at Lobby.PatientSpawn (by the street
-	entrance), cross the lobby past the chairs, and enter Reception through
-	its west door to queue at the window.
 ]]
 
 local Workspace = game:GetService("Workspace")
@@ -40,15 +43,22 @@ local Workspace = game:GetService("Workspace")
 -- Dimensions
 --------------------------------------------------------------------------------
 
-local WALL_HEIGHT = 14
+local WALL_HEIGHT = 16
 local WALL_THICKNESS = 1
 local FLOOR_THICKNESS = 1
 local CEILING_THICKNESS = 1
-local DOOR_HEIGHT = 9
+local DOOR_HEIGHT = 10
 
-local CORRIDOR_HALF_WIDTH = 6
-local CORRIDOR_X_MIN = -10
-local CORRIDOR_X_MAX = 70
+-- Small vertical gap between the floor and any flat decorative marker sitting
+-- on it (EntryPoint, InteractionZone, PatientSpawn, the player spawn pad).
+-- Without it, the marker's bottom face and the floor's top face occupy the
+-- exact same plane and the two semi-transparent/opaque surfaces flicker
+-- against each other (z-fighting) whenever the camera looks down at them.
+local MARKER_LIFT = 0.1
+
+local CORRIDOR_HALF_WIDTH = 8
+local CORRIDOR_X_MIN = -95
+local CORRIDOR_X_MAX = 105
 
 local FLOOR_COLOR = Color3.fromRGB(198, 198, 196)
 local CORRIDOR_FLOOR_COLOR = Color3.fromRGB(172, 180, 180)
@@ -73,48 +83,47 @@ local ROOMS = {
 		id = "Lobby",
 		name = "Lobby",
 		signText = "ENTRANCE",
-		center = Vector3.new(-53, 0, 0),
-		sizeX = 22,
-		sizeZ = 26,
+		center = Vector3.new(0, 0, 23),
+		sizeX = 26,
+		sizeZ = 30,
 		doors = {
-			{ side = "West", width = 8, owns = true }, -- street entrance
-			{ side = "East", width = 10, owns = false }, -- into Reception; Reception builds this wall
+			{ side = "South", width = 10, owns = true }, -- street entrance
+			{ side = "West", width = 12, owns = false }, -- into Reception; Reception builds this wall
+			{ side = "North", width = 20, owns = false }, -- into the corridor junction; corridor builds this wall
 		},
-		signSide = "West",
+		signSide = "South",
 		accent = Color3.fromRGB(120, 130, 140),
-		entryPoint = Vector3.new(-61, 0, 0),
-		interactionCenter = Vector3.new(-53, 0, 0),
-		interactionSizeX = 18,
-		interactionSizeZ = 22,
+		entryPoint = Vector3.new(0, 0, 32),
+		interactionCenter = Vector3.new(0, 0, 23),
+		interactionSizeX = 24,
+		interactionSizeZ = 26,
 	},
 	{
 		id = "Reception",
 		name = "Reception",
 		signText = "RECEPTION",
-		center = Vector3.new(-26, 0, 0),
-		sizeX = 32,
-		sizeZ = 26,
+		center = Vector3.new(-33, 0, 23),
+		sizeX = 40,
+		sizeZ = 30,
 		doors = {
-			{ side = "East", width = 12, owns = true }, -- into the corridor
-			{ side = "West", width = 10, owns = true }, -- into the Lobby
+			{ side = "East", width = 12, owns = true }, -- into the Lobby
 		},
 		signSide = "East",
 		accent = Color3.fromRGB(86, 148, 200),
-		entryPoint = Vector3.new(-38, 0, 0),
-		interactionCenter = Vector3.new(-33, 0, 0),
-		interactionSizeX = 8,
-		interactionSizeZ = 20,
+		interactionCenter = Vector3.new(-19, 0, 23),
+		interactionSizeX = 10,
+		interactionSizeZ = 22,
 	},
 	{
 		id = "BasicMedical",
 		name = "Basic Medical / DNA",
 		signText = "ROOM 1\nBASIC MEDICAL / DNA",
 		roomNumber = 1,
-		center = Vector3.new(8, 0, -16),
-		sizeX = 24,
-		sizeZ = 20,
+		center = Vector3.new(-70, 0, -21),
+		sizeX = 30,
+		sizeZ = 26,
 		doors = {
-			{ side = "South", width = 10, owns = false }, -- corridor builds this wall
+			{ side = "South", width = 12, owns = false }, -- corridor builds this wall
 		},
 		signSide = "South",
 		accent = Color3.fromRGB(90, 180, 120),
@@ -124,11 +133,11 @@ local ROOMS = {
 		name = "X-Ray",
 		signText = "ROOM 2\nX-RAY",
 		roomNumber = 2,
-		center = Vector3.new(8, 0, 16),
-		sizeX = 24,
-		sizeZ = 20,
+		center = Vector3.new(-70, 0, 21),
+		sizeX = 30,
+		sizeZ = 26,
 		doors = {
-			{ side = "North", width = 10, owns = false },
+			{ side = "North", width = 12, owns = false },
 		},
 		signSide = "North",
 		accent = Color3.fromRGB(120, 140, 210),
@@ -138,11 +147,11 @@ local ROOMS = {
 		name = "Heart Monitor",
 		signText = "ROOM 7\nHEART MONITOR",
 		roomNumber = 7,
-		center = Vector3.new(44, 0, -16),
-		sizeX = 24,
-		sizeZ = 20,
+		center = Vector3.new(70, 0, -21),
+		sizeX = 30,
+		sizeZ = 26,
 		doors = {
-			{ side = "South", width = 10, owns = false },
+			{ side = "South", width = 12, owns = false },
 		},
 		signSide = "South",
 		accent = Color3.fromRGB(210, 100, 110),
@@ -152,11 +161,11 @@ local ROOMS = {
 		name = "Surgery",
 		signText = "ROOM 8\nSURGERY",
 		roomNumber = 8,
-		center = Vector3.new(44, 0, 16),
-		sizeX = 24,
-		sizeZ = 20,
+		center = Vector3.new(70, 0, 21),
+		sizeX = 30,
+		sizeZ = 26,
 		doors = {
-			{ side = "North", width = 10, owns = false },
+			{ side = "North", width = 12, owns = false },
 		},
 		signSide = "North",
 		accent = Color3.fromRGB(200, 160, 90),
@@ -165,11 +174,11 @@ local ROOMS = {
 		id = "BreakRoom",
 		name = "Break Room",
 		signText = "BREAK ROOM\n/ SHOP",
-		center = Vector3.new(82, 0, 0),
-		sizeX = 24,
-		sizeZ = 24,
+		center = Vector3.new(120, 0, 0),
+		sizeX = 30,
+		sizeZ = 30,
 		doors = {
-			{ side = "West", width = 12, owns = true },
+			{ side = "West", width = 14, owns = true },
 		},
 		signSide = "West",
 		accent = Color3.fromRGB(150, 120, 190),
@@ -306,7 +315,7 @@ local function buildMarker(name, parent, position, sizeX, sizeZ, height, color, 
 		name,
 		parent,
 		Vector3.new(sizeX, height, sizeZ),
-		CFrame.new(position.X, position.Y + height / 2, position.Z),
+		CFrame.new(position.X, position.Y + MARKER_LIFT + height / 2, position.Z),
 		color,
 		Enum.Material.SmoothPlastic
 	)
@@ -359,56 +368,55 @@ end
 --------------------------------------------------------------------------------
 -- Lobby furniture
 --------------------------------------------------------------------------------
--- Two rows of chairs along the north and south walls, clear of the straight
--- line from the street entrance (west) to the reception door (east) so
--- patients can walk through without weaving between them.
+-- One row of chairs along the east wall, facing the Reception door across
+-- the room. The centre of the Lobby, from the street entrance (south) to the
+-- corridor junction (north), stays clear for foot traffic.
 
 local function buildLobbyFurniture(parent, room)
 	local chairColor = Color3.fromRGB(196, 168, 120)
 	local seatHeight = 1.2
 	local backHeight = 3
-	local rows = {
-		{ z = -10.5, wallSide = "North" },
-		{ z = 10.5, wallSide = "South" },
-	}
-	local seatXs = { -60, -53, -46 }
+	local seatX = 10
+	local backX = 11.5
+	local rowZs = { 14, 20, 26, 32 }
 
-	for _, row in ipairs(rows) do
-		local outward = OUTWARD[row.wallSide]
-		local backSize = Vector3.new(3, backHeight, 0.5)
-		for _, x in ipairs(seatXs) do
-			newPart(
-				"ChairSeat",
-				parent,
-				Vector3.new(3, seatHeight, 3),
-				CFrame.new(x, seatHeight / 2, row.z),
-				chairColor,
-				Enum.Material.Fabric
-			)
-			local backCenter = Vector3.new(x, backHeight / 2, row.z) + outward * 1.2
-			newPart("ChairBack", parent, backSize, CFrame.new(backCenter), chairColor, Enum.Material.Fabric)
-		end
+	for _, z in ipairs(rowZs) do
+		newPart(
+			"ChairSeat",
+			parent,
+			Vector3.new(3, seatHeight, 3),
+			CFrame.new(seatX, seatHeight / 2, z),
+			chairColor,
+			Enum.Material.Fabric
+		)
+		newPart(
+			"ChairBack",
+			parent,
+			Vector3.new(0.5, backHeight, 3),
+			CFrame.new(backX, backHeight / 2, z),
+			chairColor,
+			Enum.Material.Fabric
+		)
 	end
 
-	buildMarker("PatientSpawn", parent, Vector3.new(-61, 0, 0), 4, 4, 0.4, room.accent, 0.5)
+	buildMarker("PatientSpawn", parent, Vector3.new(0, 0, 34), 4, 4, 0.4, room.accent, 0.5)
 end
 
 --------------------------------------------------------------------------------
 -- Reception furniture
 --------------------------------------------------------------------------------
 -- The counter splits the reception in two: patients arriving from the lobby
--- wait to its west, the player works to its east, next to the corridor. Gaps
--- at both ends of the counter let an admitted patient walk through towards
--- the corridor.
+-- queue to its east, the player works to its west, away from the door. Gaps
+-- at both ends of the counter let the player walk around it.
 
 local function buildReceptionFurniture(parent, room)
-	local deskX = -30
+	local deskX = -25
 
 	newPart(
 		"ReceptionDesk",
 		parent,
-		Vector3.new(2, 4, 18),
-		CFrame.new(deskX, 2, 0),
+		Vector3.new(2, 4, 22),
+		CFrame.new(deskX, 2, room.center.Z),
 		Color3.fromRGB(120, 96, 74),
 		Enum.Material.Wood
 	)
@@ -416,8 +424,8 @@ local function buildReceptionFurniture(parent, room)
 	local window = newPart(
 		"ReceptionWindow",
 		parent,
-		Vector3.new(2, 5, 18),
-		CFrame.new(deskX, 6.5, 0),
+		Vector3.new(2, 5, 22),
+		CFrame.new(deskX, 6.5, room.center.Z),
 		Color3.fromRGB(200, 225, 235),
 		Enum.Material.Glass
 	)
@@ -426,8 +434,8 @@ local function buildReceptionFurniture(parent, room)
 	newPart(
 		"ReceptionWindowFrame",
 		parent,
-		Vector3.new(2, WALL_HEIGHT - DOOR_HEIGHT, 18),
-		CFrame.new(deskX, (DOOR_HEIGHT + WALL_HEIGHT) / 2, 0),
+		Vector3.new(2, WALL_HEIGHT - DOOR_HEIGHT, 22),
+		CFrame.new(deskX, (DOOR_HEIGHT + WALL_HEIGHT) / 2, room.center.Z),
 		WALL_COLOR,
 		Enum.Material.Concrete
 	)
@@ -435,7 +443,7 @@ local function buildReceptionFurniture(parent, room)
 	local spawnLocation = Instance.new("SpawnLocation")
 	spawnLocation.Name = "PlayerSpawn"
 	spawnLocation.Size = Vector3.new(6, 1, 6)
-	spawnLocation.CFrame = CFrame.new(-18, 0.5, 0)
+	spawnLocation.CFrame = CFrame.new(-45, 0.5 + MARKER_LIFT, room.center.Z)
 	spawnLocation.Anchored = true
 	spawnLocation.CanCollide = true
 	spawnLocation.Transparency = 1
@@ -480,8 +488,8 @@ local function wallPlan(room, side, axisCenter)
 end
 
 -- A room with exactly one doorway gets its EntryPoint placed just inside
--- that door automatically; rooms with more than one (Lobby, Reception) name
--- their EntryPoint explicitly since "just inside the door" is ambiguous.
+-- that door automatically; rooms with more than one (Lobby) name their
+-- EntryPoint explicitly since "just inside the door" is ambiguous.
 local function defaultEntryPoint(room)
 	if #room.doors == 1 then
 		local side = room.doors[1].side
@@ -579,7 +587,8 @@ local function buildCorridor(parent)
 	local floor = buildFloor(structure, center, length, CORRIDOR_HALF_WIDTH * 2, CORRIDOR_FLOOR_COLOR)
 	buildCeiling(structure, center, length, CORRIDOR_HALF_WIDTH * 2)
 
-	-- Doorways of the rooms that sit along the corridor. The corridor owns
+	-- Doorways of the rooms that sit along the corridor (including the Lobby,
+	-- which joins from the south to form the T junction). The corridor owns
 	-- these walls so the shared plane is never built twice.
 	local northGaps, southGaps = {}, {}
 	for _, room in ipairs(ROOMS) do
@@ -597,6 +606,10 @@ local function buildCorridor(parent)
 
 	buildWallAlongX(structure, -CORRIDOR_HALF_WIDTH, CORRIDOR_X_MIN, CORRIDOR_X_MAX, northGaps)
 	buildWallAlongX(structure, CORRIDOR_HALF_WIDTH, CORRIDOR_X_MIN, CORRIDOR_X_MAX, southGaps)
+
+	-- The west end is a dead end (nothing sits there), so the corridor caps
+	-- it itself. The east end is capped by BreakRoom's own wall instead.
+	wallSegmentAlongZ(structure, -CORRIDOR_HALF_WIDTH, CORRIDOR_HALF_WIDTH, CORRIDOR_X_MIN, 0, WALL_HEIGHT, "Wall")
 
 	buildMarker("EntryPoint", model, Vector3.new(0, 0, 0), 4, 4, 0.4, Color3.fromRGB(85, 220, 120), 0.5)
 
@@ -629,7 +642,7 @@ local function build()
 
 	local hospital = Instance.new("Model")
 	hospital.Name = "Hospital"
-	hospital:SetAttribute("LayoutVersion", 2)
+	hospital:SetAttribute("LayoutVersion", 3)
 	hospital.Parent = Workspace
 
 	buildCorridor(hospital)
