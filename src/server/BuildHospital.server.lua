@@ -1,17 +1,16 @@
 --[[
-	Animal Hospital - Stage 0: hospital shell builder.
+	Animal Hospital - Stage 0: hospital shell.
 
-	One-shot editor tool. It builds the whole hospital geometry
-	(reception, corridor, four exam rooms, break room) under Workspace.Hospital.
-	No gameplay scripts are created here: stage 0 is scene only.
+	Server Script. Runs by itself when the game starts and builds the whole
+	hospital geometry (reception, corridor, four exam rooms, break room)
+	under Workspace.Hospital. Stage 0 is scene only: no gameplay logic here.
 
-	How to run:
-		1. Open the place in Roblox Studio.
-		2. View -> Command Bar.
-		3. Paste the whole contents of this file and press Enter.
-		4. Save the place.
+	Where to put it:
+		ServerScriptService -> Script (Server) -> paste this file in.
+		Nothing else to do, just press Play.
 
-	Re-running is safe: an existing Workspace.Hospital is removed first.
+	The hospital is rebuilt on every server start, so editing it by hand in
+	Studio is pointless: change the ROOMS table below instead.
 
 	Structure produced (every room is identical in shape, so stage 1
 	RoomRegistry can walk them generically):
@@ -499,11 +498,22 @@ end
 -- Entry point
 --------------------------------------------------------------------------------
 
+-- Studio's Baseplate template ships with its own SpawnLocation. Left in place
+-- it competes with the reception spawn, so it goes away with the old build.
+local function removeStraySpawns()
+	for _, instance in ipairs(Workspace:GetChildren()) do
+		if instance:IsA("SpawnLocation") then
+			instance:Destroy()
+		end
+	end
+end
+
 local function build()
 	local existing = Workspace:FindFirstChild("Hospital")
 	if existing then
 		existing:Destroy()
 	end
+	removeStraySpawns()
 
 	local hospital = Instance.new("Model")
 	hospital.Name = "Hospital"

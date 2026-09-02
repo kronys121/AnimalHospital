@@ -7,16 +7,19 @@ Roblox-игра по мастер-роадмапу из `docs/roadmap.md`. Со�
 
 Этап 0: каркас больницы. Сцена без игровых скриптов.
 
-## Как собрать сцену (этап 0)
+## Как запустить (этап 0)
 
 1. Открыть место в Roblox Studio.
-2. View -> Command Bar.
-3. Вставить целиком содержимое `tools/BuildHospital.lua` и нажать Enter.
-4. Сохранить место.
+2. В `ServerScriptService` создать `Script` (тип Server).
+3. Вставить в него целиком содержимое `src/server/BuildHospital.server.lua`.
+4. Нажать Play.
 
-Скрипт идемпотентный: при повторном запуске он удаляет старую `Workspace.Hospital`
-и строит её заново. Правки геометрии делаются в таблице `ROOMS` внутри скрипта,
-а не руками в Studio, иначе они потеряются при следующей сборке.
+Больше ничего делать не нужно: скрипт сам строит всю больницу при старте сервера.
+Старая `Workspace.Hospital` и лишние `SpawnLocation` (в том числе стандартный
+с Baseplate) удаляются перед сборкой, так что повторный запуск безопасен.
+
+Больница строится заново на каждом запуске, поэтому править её руками в Studio
+бессмысленно: геометрия задаётся таблицей `ROOMS` в начале скрипта.
 
 Что получается: ресепшн со стойкой и точкой спавна пациента, коридор, четыре
 кабинета (Basic Medical / DNA, X-Ray, Heart Monitor, Surgery) и комната отдыха
@@ -32,8 +35,8 @@ docs/roadmap.md        мастер-роадмап
 docs/stage-0-layout.md планировка и координаты этапа 0
 src/shared             ModuleScript'ы в ReplicatedStorage.Shared
 src/server             скрипты в ServerScriptService.Server
+  BuildHospital.server.lua  строит больницу при запуске игры
 src/client             скрипты в StarterPlayer.StarterPlayerScripts.Client
-tools/BuildHospital.lua сборщик сцены для командной строки Studio
 ```
 
 ## Дальше
