@@ -14,21 +14,28 @@
 	cursor stays free (visible, click-to-interact) unless MouseBehavior is
 	also set to LockCenter.
 
-	IMPORTANT: only assign MouseBehavior when it is not already LockCenter.
-	The first version of this script reassigned it unconditionally every
-	RenderStepped frame, and that made things worse, not better: reassigning
-	MouseBehavior to the SAME value it already holds still re-arms the lock
-	from the engine's point of view, which resets whatever it uses internally
-	to track "how far has the mouse moved since the lock was established" -
-	so every single frame's rotation was being thrown away before the camera
-	script could consume it. That reads as exactly what it was reported as:
-	the camera stuck fast, worst right where a ProximityPrompt is on screen
-	(which is exactly when something else - Roblox's own camera module -
-	is most likely to be touching MouseBehavior itself, so this script's
-	unconditional reassignment fought it on every one of those frames too).
-	Setting it only on an actual change avoids resetting that state when
-	nothing needs correcting, while still reclaiming the lock the moment
-	something else releases it.
+	Two rounds of fixes already went into the block below - both are still
+	needed, they fix different things:
+
+	1. Only assign MouseBehavior when it is not already LockCenter, not
+	   unconditionally every frame. Reassigning it to the value it already
+	   holds still re-arms the lock as far as the engine is concerned, which
+	   resets whatever it uses internally to track mouse movement since the
+	   lock was established - doing that 60+ times a second means every
+	   frame's rotation gets thrown away before the camera script can read
+	   it. That is a stuck camera everywhere, not just near UI.
+
+	2. Clear GuiService.SelectedObject whenever something sets it. Roblox
+	   tracks a "currently selected" GuiObject for gamepad/keyboard UI
+	   navigation, and ProximityPrompt participates in that system - once its
+	   on-screen prompt becomes the selected object (which happens exactly
+	   when the, invisible but still logically positioned, locked cursor sits
+	   over it, i.e. when the player is looking straight at whatever the
+	   prompt is on), Roblox's own camera handling treats that as "the player
+	   is now interacting with a UI control" and stops turning the camera
+	   from mouse movement - exactly the reported "freezes over the prompt,
+	   fine everywhere else". This has nothing to do with MouseBehavior and
+	   the first fix could not have touched it.
 ]]
 
 local Players = game:GetService("Players")
@@ -49,20 +56,23 @@ applyFirstPerson()
 -- one spawn, but nothing here assumes that stays true forever.
 player.CharacterAdded:Connect(applyFirstPerson)
 
--- Checked every frame, but only ever WRITES MouseBehavior/MouseIconEnabled
--- when they have actually drifted from what first person wants - see the
--- note above for why an unconditional write, even to the same value, breaks
--- mouselook. Skipped entirely while Roblox's own Esc menu is open
--- (GuiService.MenuIsOpen): that menu needs a free, visible cursor to click
--- its own buttons.
+-- Checked every frame, but only ever WRITES when something has actually
+-- drifted from what first person wants - see fix 1 above for why an
+-- unconditional write, even to the same value, breaks mouselook. All of it
+-- is skipped while Roblox's own Esc menu is open (GuiService.MenuIsOpen):
+-- that menu needs a free, visible, selectable cursor to work at all.
 RunService.RenderStepped:Connect(function()
 	if GuiService.MenuIsOpen then
 		return
 	end
+
 	if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
 		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
 	end
 	if UserInputService.MouseIconEnabled then
 		UserInputService.MouseIconEnabled = false
+	end
+	if GuiService.SelectedObject ~= nil then
+		GuiService.SelectedObject = nil
 	end
 end)
