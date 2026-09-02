@@ -5,13 +5,16 @@ Roblox-игра по мастер-роадмапу из `docs/roadmap.md`. Со�
 
 ## Текущее состояние
 
-Этап 0: каркас больницы. Сцена без игровых скриптов.
+Этап 1: каркас больницы построен, есть `RoomRegistry` с четырьмя кабинетами
+на заглушках.
 
-## Как запустить (этап 0)
+## Как запустить
 
 1. Открыть место в Roblox Studio.
-2. В `ServerScriptService` создать `Script` (тип Server).
-3. Вставить в него целиком содержимое `src/server/BuildHospital.server.lua`.
+2. В `ServerScriptService` создать `Script` (тип Server) и вставить в него
+   целиком содержимое `src/server/BuildHospital.server.lua`.
+3. В `ReplicatedStorage` создать папку `Shared`, в ней `ModuleScript` с именем
+   `RoomRegistry`, и вставить в него `src/shared/RoomRegistry.lua`.
 4. Нажать Play.
 
 Больше ничего делать не нужно: скрипт сам строит всю больницу при старте сервера.
@@ -35,16 +38,30 @@ Roblox-игра по мастер-роадмапу из `docs/roadmap.md`. Со�
 ## Структура репозитория
 
 ```
-default.project.json   заготовка Rojo 7 под этапы 1+ (пока src пустой)
+default.project.json   проект Rojo 7 (src маппится в ReplicatedStorage/ServerScriptService)
 docs/roadmap.md        мастер-роадмап
 docs/stage-0-layout.md планировка и координаты этапа 0
+docs/stage-1-room-registry.md  реестр кабинетов, API и подмена заглушек
 src/shared             ModuleScript'ы в ReplicatedStorage.Shared
+  RoomRegistry.lua          реестр лечебных кабинетов
 src/server             скрипты в ServerScriptService.Server
   BuildHospital.server.lua  строит больницу при запуске игры
 src/client             скрипты в StarterPlayer.StarterPlayerScripts.Client
 ```
 
+## RoomRegistry (этап 1)
+
+`src/shared/RoomRegistry.lua` - единственное место, которое знает о лечебных
+кабинетах. Четыре кабинета (Basic Medical / DNA, X-Ray, Heart Monitor, Surgery),
+пока все на заглушках: заглушка сама возвращает случайный исход через 5 секунд,
+чтобы цикл пациента не зависал. Кабинет переключается на настоящую мини-игру
+одним вызовом `setHandler`, остальной код при этом не меняется. Подробности и
+API - в `docs/stage-1-room-registry.md`.
+
+После постройки здания скрипт сам прогоняет по одному тестовому пациенту через
+все четыре кабинета и печатает исходы в Output.
+
 ## Дальше
 
-Этап 1: `RoomRegistry` - ModuleScript с таблицей комнат и флагом `isImplemented`.
-Он будет находить комнаты по атрибуту `RoomId` на моделях в `Workspace.Hospital.Rooms`.
+Этап 2: `PatientData` - генератор пациента (имя, признаки аномалии, верный
+препарат).

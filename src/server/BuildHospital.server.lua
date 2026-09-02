@@ -10,6 +10,10 @@
 		ServerScriptService -> Script (Server) -> paste this file in.
 		Nothing else to do, just press Play.
 
+	After building it runs the stage 1 room check, if
+	ReplicatedStorage.Shared.RoomRegistry exists. Without that module the
+	build still works and the check is skipped with a warning.
+
 	The hospital is rebuilt on every server start, so editing it by hand in
 	Studio is pointless: change the ROOMS table below instead.
 
@@ -49,11 +53,19 @@ local FLOOR_THICKNESS = 1
 local CEILING_THICKNESS = 1
 local DOOR_HEIGHT = 10
 
+-- Height of the hospital's floor surface above the world origin.
+-- Studio's Baseplate is 512 x 20 x 512 at (0, -10, 0), so its top face sits
+-- exactly on Y = 0; flat-terrain templates do the same. A floor whose top
+-- face is also on Y = 0 gives two large coplanar surfaces fighting for the
+-- same depth, which is what makes the whole floor flicker. Lifting the
+-- building clear of Y = 0 removes the coincidence whatever the ground is.
+-- EntranceStep bridges the resulting step at the front door.
+local BASE_Y = 2
+
 -- Small vertical gap between the floor and any flat decorative marker sitting
 -- on it (EntryPoint, InteractionZone, PatientSpawn, the player spawn pad).
--- Without it, the marker's bottom face and the floor's top face occupy the
--- exact same plane and the two semi-transparent/opaque surfaces flicker
--- against each other (z-fighting) whenever the camera looks down at them.
+-- Same z-fighting problem one level down: without it the marker's bottom face
+-- and the floor's top face occupy the exact same plane.
 local MARKER_LIFT = 0.1
 
 local CORRIDOR_HALF_WIDTH = 8
@@ -229,7 +241,7 @@ local function wallSegmentAlongX(parent, x1, x2, z, yBottom, yTop, name)
 		name,
 		parent,
 		Vector3.new(length, height, WALL_THICKNESS),
-		CFrame.new((x1 + x2) / 2, yBottom + height / 2, z),
+		CFrame.new((x1 + x2) / 2, BASE_Y + yBottom + height / 2, z),
 		WALL_COLOR,
 		Enum.Material.Concrete
 	)
@@ -245,7 +257,7 @@ local function wallSegmentAlongZ(parent, z1, z2, x, yBottom, yTop, name)
 		name,
 		parent,
 		Vector3.new(WALL_THICKNESS, height, length),
-		CFrame.new(x, yBottom + height / 2, (z1 + z2) / 2),
+		CFrame.new(x, BASE_Y + yBottom + height / 2, (z1 + z2) / 2),
 		WALL_COLOR,
 		Enum.Material.Concrete
 	)
@@ -293,7 +305,7 @@ local function buildFloor(parent, center, sizeX, sizeZ, color)
 		"Floor",
 		parent,
 		Vector3.new(sizeX, FLOOR_THICKNESS, sizeZ),
-		CFrame.new(center.X, -FLOOR_THICKNESS / 2, center.Z),
+		CFrame.new(center.X, BASE_Y - FLOOR_THICKNESS / 2, center.Z),
 		color,
 		Enum.Material.SmoothPlastic
 	)
@@ -304,7 +316,7 @@ local function buildCeiling(parent, center, sizeX, sizeZ)
 		"Ceiling",
 		parent,
 		Vector3.new(sizeX, CEILING_THICKNESS, sizeZ),
-		CFrame.new(center.X, WALL_HEIGHT + CEILING_THICKNESS / 2, center.Z),
+		CFrame.new(center.X, BASE_Y + WALL_HEIGHT + CEILING_THICKNESS / 2, center.Z),
 		CEILING_COLOR,
 		Enum.Material.SmoothPlastic
 	)
@@ -315,7 +327,7 @@ local function buildMarker(name, parent, position, sizeX, sizeZ, height, color, 
 		name,
 		parent,
 		Vector3.new(sizeX, height, sizeZ),
-		CFrame.new(position.X, position.Y + MARKER_LIFT + height / 2, position.Z),
+		CFrame.new(position.X, BASE_Y + position.Y + MARKER_LIFT + height / 2, position.Z),
 		color,
 		Enum.Material.SmoothPlastic
 	)
@@ -337,7 +349,7 @@ local function buildSign(parent, room, side)
 		"RoomLabel",
 		parent,
 		Vector3.new(10, 3, 0.4),
-		CFrame.new(surface.X, (DOOR_HEIGHT + WALL_HEIGHT) / 2, surface.Z) * CFrame.Angles(0, SIGN_YAW[side], 0),
+		CFrame.new(surface.X, BASE_Y + (DOOR_HEIGHT + WALL_HEIGHT) / 2, surface.Z) * CFrame.Angles(0, SIGN_YAW[side], 0),
 		room.accent,
 		Enum.Material.SmoothPlastic
 	)
@@ -385,7 +397,7 @@ local function buildLobbyFurniture(parent, room)
 			"ChairSeat",
 			parent,
 			Vector3.new(3, seatHeight, 3),
-			CFrame.new(seatX, seatHeight / 2, z),
+			CFrame.new(seatX, BASE_Y + seatHeight / 2, z),
 			chairColor,
 			Enum.Material.Fabric
 		)
@@ -393,13 +405,26 @@ local function buildLobbyFurniture(parent, room)
 			"ChairBack",
 			parent,
 			Vector3.new(0.5, backHeight, 3),
-			CFrame.new(backX, backHeight / 2, z),
+			CFrame.new(backX, BASE_Y + backHeight / 2, z),
 			chairColor,
 			Enum.Material.Fabric
 		)
 	end
 
 	buildMarker("PatientSpawn", parent, Vector3.new(0, 0, 34), 4, 4, 0.4, room.accent, 0.5)
+
+	-- The building sits BASE_Y above the ground, so the street entrance needs
+	-- an intermediate step: ground -> step -> floor, one stud at a time, which
+	-- a default humanoid walks over without jumping.
+	local doorHalfWidth = 5
+	newPart(
+		"EntranceStep",
+		parent,
+		Vector3.new(doorHalfWidth * 2 + 4, 1, 5),
+		CFrame.new(0, BASE_Y - 1.5, 40.5),
+		FLOOR_COLOR,
+		Enum.Material.SmoothPlastic
+	)
 end
 
 --------------------------------------------------------------------------------
@@ -416,7 +441,7 @@ local function buildReceptionFurniture(parent, room)
 		"ReceptionDesk",
 		parent,
 		Vector3.new(2, 4, 22),
-		CFrame.new(deskX, 2, room.center.Z),
+		CFrame.new(deskX, BASE_Y + 2, room.center.Z),
 		Color3.fromRGB(120, 96, 74),
 		Enum.Material.Wood
 	)
@@ -425,7 +450,7 @@ local function buildReceptionFurniture(parent, room)
 		"ReceptionWindow",
 		parent,
 		Vector3.new(2, 5, 22),
-		CFrame.new(deskX, 6.5, room.center.Z),
+		CFrame.new(deskX, BASE_Y + 6.5, room.center.Z),
 		Color3.fromRGB(200, 225, 235),
 		Enum.Material.Glass
 	)
@@ -435,7 +460,7 @@ local function buildReceptionFurniture(parent, room)
 		"ReceptionWindowFrame",
 		parent,
 		Vector3.new(2, WALL_HEIGHT - DOOR_HEIGHT, 22),
-		CFrame.new(deskX, (DOOR_HEIGHT + WALL_HEIGHT) / 2, room.center.Z),
+		CFrame.new(deskX, BASE_Y + (DOOR_HEIGHT + WALL_HEIGHT) / 2, room.center.Z),
 		WALL_COLOR,
 		Enum.Material.Concrete
 	)
@@ -443,7 +468,7 @@ local function buildReceptionFurniture(parent, room)
 	local spawnLocation = Instance.new("SpawnLocation")
 	spawnLocation.Name = "PlayerSpawn"
 	spawnLocation.Size = Vector3.new(6, 1, 6)
-	spawnLocation.CFrame = CFrame.new(-45, 0.5 + MARKER_LIFT, room.center.Z)
+	spawnLocation.CFrame = CFrame.new(-45, BASE_Y + 0.5 + MARKER_LIFT, room.center.Z)
 	spawnLocation.Anchored = true
 	spawnLocation.CanCollide = true
 	spawnLocation.Transparency = 1
@@ -661,4 +686,36 @@ local function build()
 	return hospital
 end
 
+--------------------------------------------------------------------------------
+-- Stage 1 check
+--------------------------------------------------------------------------------
+
+-- Sends one dummy patient into every registered room and prints the results,
+-- so the Output window shows the room wiring works end to end. Set to false
+-- once stage 3 starts routing real patients.
+local RUN_ROOM_REGISTRY_CHECK = true
+
+local function runRoomRegistryCheck()
+	if not RUN_ROOM_REGISTRY_CHECK then
+		return
+	end
+
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local shared = ReplicatedStorage:FindFirstChild("Shared")
+	local moduleScript = shared and shared:FindFirstChild("RoomRegistry")
+	if not moduleScript then
+		warn("[Stage 1] ReplicatedStorage.Shared.RoomRegistry not found - skipping the room check.")
+		return
+	end
+
+	local ok, registry = pcall(require, moduleScript)
+	if not ok then
+		warn(("[Stage 1] RoomRegistry failed to load: %s"):format(tostring(registry)))
+		return
+	end
+
+	registry.runSelfTest()
+end
+
 build()
+runRoomRegistryCheck()
