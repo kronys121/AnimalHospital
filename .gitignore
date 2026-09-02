@@ -9,3 +9,6 @@
 # Tooling
 /sourcemap.json
 /.rojo
+
+# luac byte-compile artifact
+luac.out

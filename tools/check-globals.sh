@@ -33,7 +33,8 @@ KNOWN='^(game|workspace|Instance|Vector3|Vector2|CFrame|Color3|Enum|UDim|UDim2|R
 status=0
 for file in src/server/*.lua src/shared/*.lua src/client/*.lua; do
 	[ -e "$file" ] || continue
-	names=$("$LUAC" -l -l "$file" 2>/dev/null | grep -oP '_ENV "\K[A-Za-z_][A-Za-z0-9_]*' | sort -u)
+	# -o /dev/null: listing mode still writes a luac.out bytecode file otherwise.
+	names=$("$LUAC" -o /dev/null -l -l "$file" 2>/dev/null | grep -oP '_ENV "\K[A-Za-z_][A-Za-z0-9_]*' | sort -u)
 	for name in $names; do
 		echo "$name" | grep -qE "$KNOWN" && continue
 		if grep -qE "^[[:space:]]*local[[:space:]]+$name\b" "$file"; then
