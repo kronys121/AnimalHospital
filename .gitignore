@@ -1,0 +1,14 @@
+# Roblox place / model binaries
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+*.rbxl.lock
+*.rbxlx.lock
+
+# Tooling
+/sourcemap.json
+/.rojo
+
+# luac byte-compile artifact
+luac.out
