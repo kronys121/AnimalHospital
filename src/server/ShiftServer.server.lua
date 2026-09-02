@@ -2,11 +2,12 @@
 	Animal Hospital - Stage 2/3: the reception loop.
 
 	Server Script. Brings patients in one at a time, walks them to the
-	reception counter, waits for the player's decision, checks it, and routes
+	reception counter, runs the physical registration flow, and routes
 	admitted patients into a treatment room through RoomRegistry.
 
 	Where to put it:
-		ServerScriptService -> Script (Server) -> paste this file in.
+		ServerScriptService -> Script (Server) -> paste this file in,
+		alongside PickupSystem (a sibling ModuleScript it requires).
 
 	Needs, and waits for:
 		Workspace.Hospital                          (BuildHospital.server.lua)
@@ -20,6 +21,15 @@
 	from the markers BuildHospital places. No Humanoid and no physics: a
 	patient can never get stuck on geometry, fall over, or wander off, which
 	matters more than convincing walk animation at this stage.
+
+	Registration is physical, not a UI button: photograph the patient with
+	the desk camera (the photo appears on the desk, pickable and placeable
+	back down), take the photo's information to the computer, collect the
+	printed card from the printer, and hand it to the patient to admit them.
+	Rejecting needs none of that - it is a button right on the counter.
+	Every step is a ProximityPrompt, checked and driven server-side; the
+	client has no say in any of it beyond standing close enough to trigger
+	one.
 ]]
 
 local Workspace = game:GetService("Workspace")
@@ -30,6 +40,7 @@ local Players = game:GetService("Players")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local RoomRegistry = require(Shared:WaitForChild("RoomRegistry"))
 local PatientData = require(Shared:WaitForChild("PatientData"))
+local PickupSystem = require(script.Parent:WaitForChild("PickupSystem"))
 
 --------------------------------------------------------------------------------
 -- Tuning
@@ -50,6 +61,11 @@ local ROOM_WAIT_TIMEOUT = 20
 local TWITCH_MIN_GAP, TWITCH_MAX_GAP = 2.0, 4.5
 local SPEAK_MIN_GAP, SPEAK_MAX_GAP = 4.0, 7.0
 local SPEAK_DURATION = 2.5
+
+-- How long the computer takes to file the card before the printer will hand
+-- it over. Long enough to read as "processing", short enough not to stall
+-- the queue.
+local CARD_PRINT_SECONDS = 2
 
 local rng = Random.new()
 
@@ -79,9 +95,10 @@ local function ensureRemotes()
 	return {
 		PatientArrived = remote("PatientArrived"),
 		PatientLeft = remote("PatientLeft"),
-		SubmitDecision = remote("SubmitDecision"),
+		PhotoTaken = remote("PhotoTaken"),
 		DecisionResult = remote("DecisionResult"),
 		RoomOutcome = remote("RoomOutcome"),
+		Feedback = remote("Feedback"),
 	}
 end
 
@@ -141,8 +158,30 @@ local function resolveWorld()
 	local desk = findDescendant(reception, "ReceptionDesk")
 	local corridorEntry = findDescendant(corridor, "EntryPoint")
 	local lobbyFloor = findDescendant(lobby, "Floor")
-	if not (spawnMarker and receptionEntry and desk and corridorEntry and lobbyFloor) then
-		return false, "Hospital is missing one of PatientSpawn / EntryPoint / ReceptionDesk / Floor"
+	local camera = findDescendant(reception, "ReceptionCamera")
+	local photoTray = findDescendant(reception, "PhotoTray")
+	local computerDesk = findDescendant(reception, "ComputerDesk")
+	local printer = findDescendant(reception, "Printer")
+	local cardTray = findDescendant(reception, "CardTray")
+	local rejectButton = findDescendant(reception, "RejectButton")
+	if
+		not (
+			spawnMarker
+			and receptionEntry
+			and desk
+			and corridorEntry
+			and lobbyFloor
+			and camera
+			and photoTray
+			and computerDesk
+			and printer
+			and cardTray
+			and rejectButton
+		)
+	then
+		return false,
+			"Hospital is missing one of PatientSpawn / EntryPoint / ReceptionDesk / Floor / "
+				.. "ReceptionCamera / PhotoTray / ComputerDesk / Printer / CardTray / RejectButton"
 	end
 
 	world.floorY = lobbyFloor.Position.Y + lobbyFloor.Size.Y / 2
@@ -153,6 +192,19 @@ local function resolveWorld()
 	world.corridorZ = corridorEntry.Position.Z
 	-- Patients queue on the lobby side of the counter, facing the window.
 	world.counterX = desk.Position.X + desk.Size.X / 2 + 3
+
+	world.cameraPrompt = camera:FindFirstChild("PhotoPrompt")
+	world.photoHome = photoTray.CFrame
+	world.computerPrompt = computerDesk:FindFirstChild("ComputerPrompt")
+	world.printerPrompt = printer:FindFirstChild("PrinterPrompt")
+	world.cardHome = cardTray.CFrame
+	world.rejectPrompt = rejectButton:FindFirstChild("RejectPrompt")
+	if
+		not (world.cameraPrompt and world.computerPrompt and world.printerPrompt and world.rejectPrompt)
+	then
+		return false, "Reception furniture is missing one of its ProximityPrompts"
+	end
+
 	return true
 end
 
@@ -434,26 +486,105 @@ local function pathRoomToExit(entryPart)
 end
 
 --------------------------------------------------------------------------------
--- Decisions
+-- Registration flow: camera -> photo -> computer -> printer -> card -> patient
 --------------------------------------------------------------------------------
+-- Admitting a patient is a small chain of world interactions rather than a UI
+-- button; rejecting stays a single button on the counter, since it needs
+-- none of the paperwork. `session` is the patient currently at the counter;
+-- everything here reads and writes it, and the prompt handlers below are
+-- connected once (the furniture is static) and just check it on every press.
 
 local awaitingPatientId = nil
 local submitted = nil
+local session = nil
 
-remotes.SubmitDecision.OnServerEvent:Connect(function(_player, patientId, decision)
-	-- Never trust the client: only the patient currently at the counter, only
-	-- the two valid decisions, and only the first one that arrives.
-	if type(patientId) ~= "number" then
-		return
+-- Physical items, created once in setupRegistrationFlow and reused for every
+-- patient (reset between them) rather than spawned fresh each time.
+local photoItem, cardItem
+
+local function sendFeedback(player, text)
+	remotes.Feedback:FireClient(player, text)
+end
+
+-- Same framing technique the client's photo preview used: aim from the
+-- model's own LookVector so the animal faces the shot whichever way it
+-- happens to be standing.
+local function renderPhoto(viewport, patientModel)
+	viewport:ClearAllChildren()
+	local camera = Instance.new("Camera")
+	camera.Parent = viewport
+	viewport.CurrentCamera = camera
+
+	local clone = patientModel:Clone()
+	for _, descendant in ipairs(clone:GetDescendants()) do
+		if descendant:IsA("BillboardGui") then
+			descendant:Destroy()
+		end
 	end
-	if decision ~= "admit" and decision ~= "reject" then
-		return
-	end
-	if patientId ~= awaitingPatientId or submitted ~= nil then
-		return
-	end
-	submitted = decision
-end)
+	clone.Parent = viewport
+
+	local pivot = clone:GetPivot()
+	local _, size = clone:GetBoundingBox()
+	local distance = math.max(size.X, size.Y, size.Z) * 1.9
+	local target = pivot.Position + Vector3.new(0, size.Y * 0.12, 0)
+	local eye = target + pivot.LookVector * distance + pivot.RightVector * (distance * 0.28) + Vector3.new(0, size.Y * 0.18, 0)
+	camera.CFrame = CFrame.lookAt(eye, target)
+end
+
+local function clearPhoto()
+	local viewport = photoItem:FindFirstChildOfClass("SurfaceGui"):FindFirstChildOfClass("ViewportFrame")
+	viewport:ClearAllChildren()
+end
+
+local function setCardText(text)
+	local gui = cardItem:FindFirstChildOfClass("SurfaceGui")
+	gui.Text.Text = text
+end
+
+-- Reset before each new patient: force both items back to the desk (even if
+-- someone is mid-carry) so a leftover photo or card from the last patient
+-- never bleeds into the next one's flow.
+local function resetRegistration(patient, model)
+	session = { patient = patient, model = model, photographed = false, cardPrinting = false, cardPrinted = false }
+
+	PickupSystem.placeDown(photoItem)
+	clearPhoto()
+	photoItem.PickupPrompt.Enabled = false
+
+	PickupSystem.placeDown(cardItem)
+	cardItem.Transparency = 1
+	cardItem.CanCollide = false
+	cardItem.PickupPrompt.Enabled = false
+end
+
+local function clearSession()
+	session = nil
+end
+
+-- Attaches the "hand over the card" prompt to this patient specifically -
+-- each patient is a fresh model, so this runs once per arrival rather than
+-- being set up in setupRegistrationFlow with the static furniture.
+local function attachHandoverPrompt(actor)
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "HandoverPrompt"
+	prompt.ActionText = "Отдать карточку"
+	prompt.ObjectText = actor.data.name
+	prompt.HoldDuration = 0
+	prompt.MaxActivationDistance = 8
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = actor.model.PrimaryPart
+
+	prompt.Triggered:Connect(function(player)
+		if not session or session.patient.id ~= actor.data.id or submitted ~= nil then
+			return
+		end
+		if not PickupSystem.isHeldBy(cardItem, player) then
+			sendFeedback(player, "Сначала возьмите карточку из принтера.")
+			return
+		end
+		submitted = "admit"
+	end)
+end
 
 local function waitForDecision(patientId)
 	awaitingPatientId = patientId
@@ -468,6 +599,169 @@ local function waitForDecision(patientId)
 	local decision = submitted or "timeout"
 	submitted = nil
 	return decision
+end
+
+-- Connected once; the furniture and its prompts persist across patients, so
+-- this only needs wiring up a single time in setupRegistrationFlow.
+local function connectRegistrationPrompts()
+	world.cameraPrompt.Triggered:Connect(function(player)
+		if not session then
+			return
+		end
+		renderPhoto(photoItem:FindFirstChildOfClass("SurfaceGui"):FindFirstChildOfClass("ViewportFrame"), session.model)
+		session.photographed = true
+		photoItem.PickupPrompt.Enabled = true
+		remotes.PhotoTaken:FireAllClients(session.patient.id)
+	end)
+
+	world.computerPrompt.Triggered:Connect(function(player)
+		if not session then
+			return
+		end
+		if not session.photographed then
+			sendFeedback(player, "Сначала сфотографируйте пациента.")
+			return
+		end
+		if session.cardPrinting or session.cardPrinted then
+			sendFeedback(player, "Карточка уже оформляется.")
+			return
+		end
+		session.cardPrinting = true
+		local thisSession = session
+		task.delay(CARD_PRINT_SECONDS, function()
+			if session == thisSession then
+				session.cardPrinting = false
+				session.cardPrinted = true
+			end
+		end)
+	end)
+
+	world.printerPrompt.Triggered:Connect(function(player)
+		if not session then
+			return
+		end
+		if not session.cardPrinted then
+			sendFeedback(player, session.cardPrinting and "Карточка ещё печатается." or "Сначала оформите карточку на компьютере.")
+			return
+		end
+		if cardItem.Transparency == 0 then
+			return -- already collected from the printer
+		end
+		setCardText(session.patient.name)
+		cardItem.Transparency = 0
+		cardItem.CanCollide = false
+		cardItem.PickupPrompt.Enabled = true
+	end)
+
+	world.rejectPrompt.Triggered:Connect(function(_player)
+		if not session or submitted ~= nil then
+			return
+		end
+		submitted = "reject"
+	end)
+end
+
+-- The two carryable items share this pickup/place wiring: a Pickup prompt
+-- that succeeds through PickupSystem, and a Place prompt that always
+-- succeeds (you can put down whatever you are holding, wherever you are).
+local function wirePickup(part, homeCFrame)
+	PickupSystem.register(part, homeCFrame)
+
+	local pickupPrompt = Instance.new("ProximityPrompt")
+	pickupPrompt.Name = "PickupPrompt"
+	pickupPrompt.ActionText = "Взять"
+	pickupPrompt.HoldDuration = 0
+	pickupPrompt.MaxActivationDistance = 8
+	pickupPrompt.RequiresLineOfSight = false
+	pickupPrompt.Parent = part
+	pickupPrompt.Triggered:Connect(function(player)
+		PickupSystem.pickUp(part, player)
+	end)
+
+	local placePrompt = Instance.new("ProximityPrompt")
+	placePrompt.Name = "PlacePrompt"
+	placePrompt.ActionText = "Положить на стол"
+	placePrompt.HoldDuration = 0
+	placePrompt.MaxActivationDistance = 8
+	placePrompt.RequiresLineOfSight = false
+	placePrompt.Parent = part
+	placePrompt.Triggered:Connect(function(player)
+		if PickupSystem.isHeldBy(part, player) then
+			PickupSystem.placeDown(part)
+		end
+	end)
+
+	return pickupPrompt, placePrompt
+end
+
+local function buildPhotoItem()
+	local part = Instance.new("Part")
+	part.Name = "Photo"
+	part.Size = Vector3.new(2, 0.1, 2.6)
+	part.CFrame = world.photoHome
+	part.Anchored = true
+	part.CanCollide = false
+	part.Color = Color3.fromRGB(250, 250, 245)
+	part.Material = Enum.Material.SmoothPlastic
+	part.Parent = Workspace
+
+	local gui = Instance.new("SurfaceGui")
+	gui.Name = "Display"
+	gui.Face = Enum.NormalId.Top
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = 50
+	gui.LightInfluence = 0
+	gui.Parent = part
+
+	local viewport = Instance.new("ViewportFrame")
+	viewport.Size = UDim2.fromScale(1, 1)
+	viewport.BackgroundColor3 = Color3.fromRGB(30, 30, 34)
+	viewport.Parent = gui
+
+	local photoPickupPrompt = wirePickup(part, world.photoHome)
+	photoPickupPrompt.Enabled = false
+	return part
+end
+
+local function buildCardItem()
+	local part = Instance.new("Part")
+	part.Name = "PatientCard"
+	part.Size = Vector3.new(1.6, 0.1, 1)
+	part.CFrame = world.cardHome
+	part.Anchored = true
+	part.CanCollide = false
+	part.Color = Color3.fromRGB(250, 250, 245)
+	part.Material = Enum.Material.SmoothPlastic
+	part.Transparency = 1
+	part.Parent = Workspace
+
+	local gui = Instance.new("SurfaceGui")
+	gui.Name = "Display"
+	gui.Face = Enum.NormalId.Top
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = 50
+	gui.LightInfluence = 0
+	gui.Parent = part
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Text"
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.GothamBold
+	label.TextScaled = true
+	label.TextColor3 = Color3.fromRGB(20, 20, 24)
+	label.Text = ""
+	label.Parent = gui
+
+	local pickupPrompt = wirePickup(part, world.cardHome)
+	pickupPrompt.Enabled = false
+	return part
+end
+
+local function setupRegistrationFlow()
+	photoItem = buildPhotoItem()
+	cardItem = buildCardItem()
+	connectRegistrationPrompts()
 end
 
 --------------------------------------------------------------------------------
@@ -569,12 +863,15 @@ local function serveOnePatient()
 	walkPath(actor, pathToCounter())
 	faceDirection(actor, Vector3.new(-1, 0, 0))
 	startIdleBehaviour(actor)
+	attachHandoverPrompt(actor)
 
 	atCounter = { public = PatientData.toPublic(patient), model = model }
 	remotes.PatientArrived:FireAllClients(atCounter.public, atCounter.model)
+	resetRegistration(patient, model)
 
 	local decision = waitForDecision(patient.id)
 	atCounter = nil
+	clearSession()
 	stopIdleBehaviour(actor)
 
 	local correct = PatientData.isDecisionCorrect(patient, decision)
@@ -616,6 +913,7 @@ local function main()
 		warn(("[Shift] %s"):format(err))
 		return
 	end
+	setupRegistrationFlow()
 
 	print("[Shift] reception open")
 	while true do

@@ -1,23 +1,21 @@
 --[[
-	Animal Hospital - Stage 2/3: the reception UI.
+	Animal Hospital - the reception HUD.
 
-	LocalScript. Draws the registration card for whoever is standing at the
-	counter: a photo panel, the patient's details, and the admit / reject
-	buttons.
+	LocalScript. A small heads-up card for whoever is at the counter (name,
+	species, a photographed/not status line) plus the decision result banner
+	and the treatment log. It does not decide anything: registration itself
+	happens in the world now (camera, photo, computer, printer, the reject
+	button, handing the card to the patient), all ProximityPrompts driven and
+	validated by ShiftServer.server.lua. This script only reflects state back
+	to the player - there is no admit/reject/photo button here anymore.
 
 	Where to put it:
 		StarterPlayer -> StarterPlayerScripts -> LocalScript named
 		"ReceptionClient" -> paste this file in.
 
-	The photo is a ViewportFrame holding a frozen clone of the patient model.
-	That is what makes photographing worth doing: body traits (too many teeth)
-	stay in the picture and can be studied at leisure, while behaviour traits
-	(twitching, a wrong voice) never appear in a still and can only be caught
-	by watching the patient at the counter. Neither the camera nor standing and
-	staring is enough on its own.
-
-	This script knows nothing about who is an anomaly. The server sends only a
-	name and species before the decision, and checks the answer itself.
+	This script knows nothing about who is an anomaly. The server sends only
+	a name and species while a patient is waiting, and reveals the truth in
+	DecisionResult only after the round is over.
 ]]
 
 local Players = game:GetService("Players")
@@ -28,24 +26,22 @@ local player = Players.LocalPlayer
 local remotes = ReplicatedStorage:WaitForChild("AnimalHospital")
 local PatientArrived = remotes:WaitForChild("PatientArrived")
 local PatientLeft = remotes:WaitForChild("PatientLeft")
-local SubmitDecision = remotes:WaitForChild("SubmitDecision")
+local PhotoTaken = remotes:WaitForChild("PhotoTaken")
 local DecisionResult = remotes:WaitForChild("DecisionResult")
 local RoomOutcome = remotes:WaitForChild("RoomOutcome")
+local Feedback = remotes:WaitForChild("Feedback")
 
--- How close the player has to be to the patient for the card to open, so
--- registration happens at the counter rather than from across the building.
+-- How close the player has to be to the patient for the card to show, so it
+-- reads as "the patient currently at the counter", not "any patient".
 local COUNTER_RANGE = 22
 
 local COLORS = {
 	panel = Color3.fromRGB(24, 26, 30),
-	panelLight = Color3.fromRGB(38, 41, 47),
 	text = Color3.fromRGB(235, 237, 240),
 	muted = Color3.fromRGB(150, 155, 163),
-	admit = Color3.fromRGB(58, 140, 82),
-	reject = Color3.fromRGB(163, 62, 62),
-	camera = Color3.fromRGB(70, 96, 150),
 	good = Color3.fromRGB(96, 196, 128),
 	bad = Color3.fromRGB(214, 96, 96),
+	warn = Color3.fromRGB(224, 180, 96),
 }
 
 --------------------------------------------------------------------------------
@@ -53,8 +49,6 @@ local COLORS = {
 --------------------------------------------------------------------------------
 
 local current = nil -- { info = {...}, model = Model }
-local hasPhoto = false
-local decisionSent = false
 
 --------------------------------------------------------------------------------
 -- UI
@@ -87,83 +81,34 @@ local function label(parent, text, size, position, font, textSize, color)
 	return instance
 end
 
-local function button(parent, text, size, position, color)
-	local instance = Instance.new("TextButton")
-	instance.Size = size
-	instance.Position = position
-	instance.BackgroundColor3 = color
-	instance.BorderSizePixel = 0
-	instance.AutoButtonColor = true
-	instance.Font = Enum.Font.GothamBold
-	instance.TextSize = 14
-	instance.TextColor3 = COLORS.text
-	instance.Text = text
-	instance.Parent = parent
-	corner(instance, 6)
-	return instance
-end
-
--- Registration card
+-- Patient info card
 local card = Instance.new("Frame")
 card.Name = "Card"
-card.Size = UDim2.fromOffset(320, 430)
-card.Position = UDim2.new(1, -340, 0.5, -215)
+card.Size = UDim2.fromOffset(300, 190)
+card.Position = UDim2.new(1, -320, 0.5, -95)
 card.BackgroundColor3 = COLORS.panel
 card.BorderSizePixel = 0
 card.Visible = false
 card.Parent = screen
 corner(card, 10)
 
-label(card, "РЕГИСТРАЦИЯ", UDim2.new(1, -24, 0, 22), UDim2.fromOffset(16, 14), Enum.Font.GothamBold, 16)
-
-local photoFrame = Instance.new("Frame")
-photoFrame.Size = UDim2.new(1, -32, 0, 200)
-photoFrame.Position = UDim2.fromOffset(16, 44)
-photoFrame.BackgroundColor3 = COLORS.panelLight
-photoFrame.BorderSizePixel = 0
-photoFrame.ClipsDescendants = true
-photoFrame.Parent = card
-corner(photoFrame, 8)
-
-local viewport = Instance.new("ViewportFrame")
-viewport.Size = UDim2.fromScale(1, 1)
-viewport.BackgroundTransparency = 1
-viewport.Ambient = Color3.fromRGB(190, 190, 195)
-viewport.LightColor = Color3.fromRGB(255, 255, 255)
-viewport.LightDirection = Vector3.new(-0.3, -1, -0.6)
-viewport.Visible = false
-viewport.Parent = photoFrame
-
-local photoPlaceholder = label(
-	photoFrame,
-	"Фото не сделано",
-	UDim2.fromScale(1, 1),
-	UDim2.fromScale(0, 0),
-	Enum.Font.Gotham,
-	14,
-	COLORS.muted
-)
-photoPlaceholder.TextXAlignment = Enum.TextXAlignment.Center
-
-local photoButton = button(card, "СФОТОГРАФИРОВАТЬ", UDim2.new(1, -32, 0, 32), UDim2.fromOffset(16, 254), COLORS.camera)
-
-local nameLabel = label(card, "", UDim2.new(1, -32, 0, 22), UDim2.fromOffset(16, 296), Enum.Font.GothamBold, 16)
+label(card, "У СТОЙКИ", UDim2.new(1, -24, 0, 20), UDim2.fromOffset(16, 12), Enum.Font.GothamBold, 15)
+local nameLabel = label(card, "", UDim2.new(1, -32, 0, 22), UDim2.fromOffset(16, 38), Enum.Font.GothamBold, 16)
 local speciesLabel =
-	label(card, "", UDim2.new(1, -32, 0, 18), UDim2.fromOffset(16, 318), Enum.Font.Gotham, 13, COLORS.muted)
+	label(card, "", UDim2.new(1, -32, 0, 18), UDim2.fromOffset(16, 60), Enum.Font.Gotham, 13, COLORS.muted)
+local photoStatusLabel =
+	label(card, "", UDim2.new(1, -32, 0, 18), UDim2.fromOffset(16, 82), Enum.Font.Gotham, 13, COLORS.warn)
 
 local hintLabel = label(
 	card,
-	"Сфотографируйте пациента и посмотрите на снимок. Не всё видно на фото - понаблюдайте за ним у стойки.",
-	UDim2.new(1, -32, 0, 46),
-	UDim2.fromOffset(16, 340),
+	"Сфотографируйте пациента камерой на столе, оформите карточку на компьютере, заберите её в принтере и отдайте пациенту. Отклонить можно кнопкой на столе.",
+	UDim2.new(1, -32, 0, 78),
+	UDim2.fromOffset(16, 104),
 	Enum.Font.Gotham,
 	12,
 	COLORS.muted
 )
 hintLabel.TextWrapped = true
-
-local admitButton = button(card, "ВПУСТИТЬ", UDim2.new(0.5, -20, 0, 34), UDim2.fromOffset(16, 386), COLORS.admit)
-local rejectButton = button(card, "ОТКЛОНИТЬ", UDim2.new(0.5, -20, 0, 34), UDim2.new(0.5, 4, 0, 386), COLORS.reject)
 
 -- Result banner
 local banner = Instance.new("Frame")
@@ -181,70 +126,25 @@ local bannerBody = label(banner, "", UDim2.new(1, -24, 0, 30), UDim2.fromOffset(
 bannerBody.TextXAlignment = Enum.TextXAlignment.Center
 bannerBody.TextWrapped = true
 
+-- Feedback toast (e.g. "Сначала сфотографируйте пациента.")
+local toast = Instance.new("Frame")
+toast.Size = UDim2.fromOffset(360, 44)
+toast.Position = UDim2.new(0.5, -180, 0, 98)
+toast.BackgroundColor3 = COLORS.panel
+toast.BorderSizePixel = 0
+toast.Visible = false
+toast.Parent = screen
+corner(toast, 8)
+local toastLabel = label(toast, "", UDim2.new(1, -20, 1, 0), UDim2.fromOffset(10, 0), Enum.Font.Gotham, 13, COLORS.warn)
+toastLabel.TextXAlignment = Enum.TextXAlignment.Center
+toastLabel.TextWrapped = true
+
 -- Treatment log
 local logLabel = label(screen, "", UDim2.fromOffset(460, 22), UDim2.new(0, 18, 1, -40), Enum.Font.Gotham, 13, COLORS.muted)
 
 --------------------------------------------------------------------------------
--- Photo
+-- Helpers
 --------------------------------------------------------------------------------
-
-local function clearPhoto()
-	hasPhoto = false
-	viewport:ClearAllChildren()
-	viewport.Visible = false
-	photoPlaceholder.Visible = true
-	photoButton.Text = "СФОТОГРАФИРОВАТЬ"
-end
-
-local function takePhoto()
-	if not current or not current.model or not current.model.Parent then
-		return
-	end
-
-	viewport:ClearAllChildren()
-
-	local camera = Instance.new("Camera")
-	camera.Parent = viewport
-	viewport.CurrentCamera = camera
-
-	local clone = current.model:Clone()
-	-- The name tag and the speech bubble are UI, not the animal. Leaving them
-	-- in would put the patient's line in the photo, which would hand the
-	-- player the wrongVoice trait for free.
-	for _, descendant in ipairs(clone:GetDescendants()) do
-		if descendant:IsA("BillboardGui") then
-			descendant:Destroy()
-		end
-	end
-	clone.Parent = viewport
-
-	-- Frame the animal from its own front, whichever way it happens to be
-	-- facing at the counter.
-	local pivot = clone:GetPivot()
-	local _, size = clone:GetBoundingBox()
-	local distance = math.max(size.X, size.Y, size.Z) * 1.9
-	local target = pivot.Position + Vector3.new(0, size.Y * 0.12, 0)
-	local eye = target + pivot.LookVector * distance + pivot.RightVector * (distance * 0.28) + Vector3.new(0, size.Y * 0.18, 0)
-	camera.CFrame = CFrame.lookAt(eye, target)
-
-	hasPhoto = true
-	viewport.Visible = true
-	photoPlaceholder.Visible = false
-	photoButton.Text = "ПЕРЕСНЯТЬ"
-end
-
---------------------------------------------------------------------------------
--- Card
---------------------------------------------------------------------------------
-
-local function setButtonsEnabled(enabled)
-	admitButton.Active = enabled
-	rejectButton.Active = enabled
-	admitButton.AutoButtonColor = enabled
-	rejectButton.AutoButtonColor = enabled
-	admitButton.BackgroundColor3 = enabled and COLORS.admit or COLORS.panelLight
-	rejectButton.BackgroundColor3 = enabled and COLORS.reject or COLORS.panelLight
-end
 
 local function showBanner(correct, text)
 	bannerTitle.Text = correct and "ВЕРНО" or "ОШИБКА"
@@ -272,42 +172,28 @@ RunService.Heartbeat:Connect(function()
 	card.Visible = current ~= nil and distanceToPatient() <= COUNTER_RANGE
 end)
 
-photoButton.Activated:Connect(takePhoto)
-
-local function submit(decision)
-	if not current or decisionSent then
-		return
-	end
-	decisionSent = true
-	setButtonsEnabled(false)
-	SubmitDecision:FireServer(current.info.id, decision)
-end
-
-admitButton.Activated:Connect(function()
-	submit("admit")
-end)
-rejectButton.Activated:Connect(function()
-	submit("reject")
-end)
-
 --------------------------------------------------------------------------------
 -- Server events
 --------------------------------------------------------------------------------
 
 PatientArrived.OnClientEvent:Connect(function(info, model)
 	current = { info = info, model = model }
-	decisionSent = false
-	clearPhoto()
-	setButtonsEnabled(true)
 	nameLabel.Text = info.name
 	speciesLabel.Text = ("Вид: %s"):format(info.speciesLabel)
+	photoStatusLabel.Text = "Фото: не сделано"
 end)
 
 PatientLeft.OnClientEvent:Connect(function(patientId)
 	if current and current.info.id == patientId then
 		current = nil
 		card.Visible = false
-		clearPhoto()
+	end
+end)
+
+PhotoTaken.OnClientEvent:Connect(function(patientId)
+	if current and current.info.id == patientId then
+		photoStatusLabel.Text = "Фото: сделано"
+		photoStatusLabel.TextColor3 = COLORS.good
 	end
 end)
 
@@ -332,6 +218,16 @@ RoomOutcome.OnClientEvent:Connect(function(outcome)
 	task.delay(8, function()
 		if logLabel.Text:find(outcome.patientName, 1, true) then
 			logLabel.Text = ""
+		end
+	end)
+end)
+
+Feedback.OnClientEvent:Connect(function(text)
+	toastLabel.Text = text
+	toast.Visible = true
+	task.delay(3, function()
+		if toastLabel.Text == text then
+			toast.Visible = false
 		end
 	end)
 end)

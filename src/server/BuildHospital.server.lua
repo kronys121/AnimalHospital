@@ -68,9 +68,9 @@ local BASE_Y = 2
 -- and the floor's top face occupy the exact same plane.
 local MARKER_LIFT = 0.1
 
-local CORRIDOR_HALF_WIDTH = 8
-local CORRIDOR_X_MIN = -95
-local CORRIDOR_X_MAX = 105
+local CORRIDOR_HALF_WIDTH = 11
+local CORRIDOR_X_MIN = -129
+local CORRIDOR_X_MAX = 129
 
 local FLOOR_COLOR = Color3.fromRGB(198, 198, 196)
 local CORRIDOR_FLOOR_COLOR = Color3.fromRGB(172, 180, 180)
@@ -95,34 +95,34 @@ local ROOMS = {
 		id = "Lobby",
 		name = "Lobby",
 		signText = "ENTRANCE",
-		center = Vector3.new(0, 0, 23),
-		sizeX = 26,
+		center = Vector3.new(0, 0, 26),
+		sizeX = 30,
 		sizeZ = 30,
 		doors = {
-			{ side = "South", width = 10, owns = true }, -- street entrance
-			{ side = "West", width = 12, owns = false }, -- into Reception; Reception builds this wall
-			{ side = "North", width = 20, owns = false }, -- into the corridor junction; corridor builds this wall
+			{ side = "South", width = 12, owns = true }, -- street entrance
+			{ side = "West", width = 16, owns = false }, -- into Reception; Reception builds this wall
+			{ side = "North", width = 22, owns = false }, -- into the corridor junction; corridor builds this wall
 		},
 		signSide = "South",
 		accent = Color3.fromRGB(120, 130, 140),
-		entryPoint = Vector3.new(0, 0, 32),
-		interactionCenter = Vector3.new(0, 0, 23),
-		interactionSizeX = 24,
+		entryPoint = Vector3.new(0, 0, 37),
+		interactionCenter = Vector3.new(0, 0, 26),
+		interactionSizeX = 26,
 		interactionSizeZ = 26,
 	},
 	{
 		id = "Reception",
 		name = "Reception",
 		signText = "RECEPTION",
-		center = Vector3.new(-33, 0, 23),
-		sizeX = 40,
+		center = Vector3.new(-43, 0, 26),
+		sizeX = 56,
 		sizeZ = 30,
 		doors = {
-			{ side = "East", width = 12, owns = true }, -- into the Lobby
+			{ side = "East", width = 16, owns = true }, -- into the Lobby
 		},
 		signSide = "East",
 		accent = Color3.fromRGB(86, 148, 200),
-		interactionCenter = Vector3.new(-19, 0, 23),
+		interactionCenter = Vector3.new(-20, 0, 26),
 		interactionSizeX = 10,
 		interactionSizeZ = 22,
 	},
@@ -131,11 +131,11 @@ local ROOMS = {
 		name = "Basic Medical / DNA",
 		signText = "ROOM 1\nBASIC MEDICAL / DNA",
 		roomNumber = 1,
-		center = Vector3.new(-70, 0, -21),
-		sizeX = 30,
-		sizeZ = 26,
+		center = Vector3.new(-96, 0, -26),
+		sizeX = 34,
+		sizeZ = 30,
 		doors = {
-			{ side = "South", width = 12, owns = false }, -- corridor builds this wall
+			{ side = "South", width = 16, owns = false }, -- corridor builds this wall
 		},
 		signSide = "South",
 		accent = Color3.fromRGB(90, 180, 120),
@@ -145,11 +145,11 @@ local ROOMS = {
 		name = "X-Ray",
 		signText = "ROOM 2\nX-RAY",
 		roomNumber = 2,
-		center = Vector3.new(-70, 0, 21),
-		sizeX = 30,
-		sizeZ = 26,
+		center = Vector3.new(-96, 0, 26),
+		sizeX = 34,
+		sizeZ = 30,
 		doors = {
-			{ side = "North", width = 12, owns = false },
+			{ side = "North", width = 16, owns = false },
 		},
 		signSide = "North",
 		accent = Color3.fromRGB(120, 140, 210),
@@ -159,11 +159,11 @@ local ROOMS = {
 		name = "Heart Monitor",
 		signText = "ROOM 7\nHEART MONITOR",
 		roomNumber = 7,
-		center = Vector3.new(70, 0, -21),
-		sizeX = 30,
-		sizeZ = 26,
+		center = Vector3.new(96, 0, -26),
+		sizeX = 34,
+		sizeZ = 30,
 		doors = {
-			{ side = "South", width = 12, owns = false },
+			{ side = "South", width = 16, owns = false },
 		},
 		signSide = "South",
 		accent = Color3.fromRGB(210, 100, 110),
@@ -173,11 +173,11 @@ local ROOMS = {
 		name = "Surgery",
 		signText = "ROOM 8\nSURGERY",
 		roomNumber = 8,
-		center = Vector3.new(70, 0, 21),
-		sizeX = 30,
-		sizeZ = 26,
+		center = Vector3.new(96, 0, 26),
+		sizeX = 34,
+		sizeZ = 30,
 		doors = {
-			{ side = "North", width = 12, owns = false },
+			{ side = "North", width = 16, owns = false },
 		},
 		signSide = "North",
 		accent = Color3.fromRGB(200, 160, 90),
@@ -186,11 +186,11 @@ local ROOMS = {
 		id = "BreakRoom",
 		name = "Break Room",
 		signText = "BREAK ROOM\n/ SHOP",
-		center = Vector3.new(120, 0, 0),
-		sizeX = 30,
-		sizeZ = 30,
+		center = Vector3.new(146, 0, 0),
+		sizeX = 34,
+		sizeZ = 34,
 		doors = {
-			{ side = "West", width = 14, owns = true },
+			{ side = "West", width = 18, owns = true },
 		},
 		signSide = "West",
 		accent = Color3.fromRGB(150, 120, 190),
@@ -390,7 +390,7 @@ local function buildLobbyFurniture(parent, room)
 	local backHeight = 3
 	local seatX = 10
 	local backX = 11.5
-	local rowZs = { 14, 20, 26, 32 }
+	local rowZs = { 17, 23, 29, 35 }
 
 	for _, z in ipairs(rowZs) do
 		newPart(
@@ -411,17 +411,17 @@ local function buildLobbyFurniture(parent, room)
 		)
 	end
 
-	buildMarker("PatientSpawn", parent, Vector3.new(0, 0, 34), 4, 4, 0.4, room.accent, 0.5)
+	buildMarker("PatientSpawn", parent, Vector3.new(0, 0, 37), 4, 4, 0.4, room.accent, 0.5)
 
 	-- The building sits BASE_Y above the ground, so the street entrance needs
 	-- an intermediate step: ground -> step -> floor, one stud at a time, which
 	-- a default humanoid walks over without jumping.
-	local doorHalfWidth = 5
+	local doorHalfWidth = 6
 	newPart(
 		"EntranceStep",
 		parent,
 		Vector3.new(doorHalfWidth * 2 + 4, 1, 5),
-		CFrame.new(0, BASE_Y - 1.5, 40.5),
+		CFrame.new(0, BASE_Y - 1.5, 43.5),
 		FLOOR_COLOR,
 		Enum.Material.SmoothPlastic
 	)
@@ -430,50 +430,272 @@ end
 --------------------------------------------------------------------------------
 -- Reception furniture
 --------------------------------------------------------------------------------
--- The counter splits the reception in two: patients arriving from the lobby
--- queue to its east, the player works to its west, away from the door. Gaps
--- at both ends of the counter let the player walk around it.
+-- No glass window: the counter is open so the player and the patient can see
+-- and hear each other directly, which the registration workflow depends on.
+-- Along the west wall, away from the queue: a camera on the counter for
+-- photographing the patient, a computer desk to file the card, and a printer
+-- to collect it. Gaps at both ends of the counter let the player walk around
+-- it towards the corridor door.
+
+local function newPrompt(parent, name, actionText, objectText, maxDistance)
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = name
+	prompt.ActionText = actionText
+	prompt.ObjectText = objectText or ""
+	prompt.HoldDuration = 0
+	prompt.MaxActivationDistance = maxDistance or 8
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = parent
+	return prompt
+end
 
 local function buildReceptionFurniture(parent, room)
-	local deskX = -25
+	local deskX = -24
+	local deskZ = room.center.Z
 
-	newPart(
+	local desk = newPart(
 		"ReceptionDesk",
 		parent,
-		Vector3.new(2, 3, 22),
-		CFrame.new(deskX, BASE_Y + 1.5, room.center.Z),
+		Vector3.new(2, 3, 20),
+		CFrame.new(deskX, BASE_Y + 1.5, deskZ),
 		Color3.fromRGB(120, 96, 74),
 		Enum.Material.Wood
 	)
 
-	local window = newPart(
-		"ReceptionWindow",
-		parent,
-		Vector3.new(2, 6, 22),
-		CFrame.new(deskX, BASE_Y + 6, room.center.Z),
-		Color3.fromRGB(200, 225, 235),
-		Enum.Material.Glass
-	)
-	window.Transparency = 0.6
+	-- Desk-top height, for props that sit on the counter rather than the floor.
+	local deskTopY = 3
 
-	newPart(
-		"ReceptionWindowFrame",
+	-- Camera sits on the counter. ShiftServer/RegistrationFlow enables the
+	-- prompt only while a patient is waiting at the counter.
+	local camera = newPart(
+		"ReceptionCamera",
 		parent,
-		Vector3.new(2, WALL_HEIGHT - DOOR_HEIGHT, 22),
-		CFrame.new(deskX, BASE_Y + (DOOR_HEIGHT + WALL_HEIGHT) / 2, room.center.Z),
-		WALL_COLOR,
-		Enum.Material.Concrete
+		Vector3.new(1.2, 1, 1.2),
+		CFrame.new(deskX, BASE_Y + deskTopY + 0.5, deskZ - 4),
+		Color3.fromRGB(40, 42, 46),
+		Enum.Material.Metal
 	)
+	camera.CanCollide = false
+	newPrompt(camera, "PhotoPrompt", "Сфотографировать", "Камера", 8)
+
+	-- Where the developed photo appears after a shot, and where it goes back
+	-- to when the player places it down again. Sits on the counter, not the
+	-- floor, so the Y offset is the desk top height, not 0.
+	buildMarker(
+		"PhotoTray",
+		parent,
+		Vector3.new(deskX, deskTopY, deskZ - 1),
+		2,
+		2,
+		0.05,
+		Color3.fromRGB(235, 235, 230),
+		0.3
+	)
+
+	local computerDesk = newPart(
+		"ComputerDesk",
+		parent,
+		Vector3.new(3, 2.4, 3),
+		CFrame.new(-38, BASE_Y + 1.2, deskZ - 6),
+		Color3.fromRGB(120, 96, 74),
+		Enum.Material.Wood
+	)
+	newPart(
+		"ComputerMonitor",
+		parent,
+		Vector3.new(1.8, 1.4, 0.2),
+		CFrame.new(-38, BASE_Y + computerDeskTopY + 0.7, deskZ - 6 - 1.2),
+		Color3.fromRGB(20, 20, 24),
+		Enum.Material.SmoothPlastic
+	)
+	newPrompt(computerDesk, "ComputerPrompt", "Оформить карточку", "Компьютер", 8)
+	local computerDeskTopY = 2.4
+
+	local printer = newPart(
+		"Printer",
+		parent,
+		Vector3.new(2.4, 1.6, 2),
+		CFrame.new(-38, BASE_Y + 1.8, deskZ + 6),
+		Color3.fromRGB(220, 220, 216),
+		Enum.Material.SmoothPlastic
+	)
+	newPrompt(printer, "PrinterPrompt", "Забрать карточку", "Принтер", 8)
+	-- Sits on top of the printer (Y = printer centre 1.8 + half its 1.6
+	-- thickness = 2.6), not on the floor.
+	buildMarker(
+		"CardTray",
+		parent,
+		Vector3.new(-38, 2.6, deskZ + 6),
+		1.6,
+		1,
+		0.05,
+		Color3.fromRGB(235, 235, 230),
+		0.3
+	)
+
+	-- Reject sits on the counter itself, always reachable while a patient is
+	-- waiting; unlike admitting it needs no photo or printed card.
+	local rejectButton = newPart(
+		"RejectButton",
+		parent,
+		Vector3.new(1, 1, 1),
+		CFrame.new(deskX, BASE_Y + deskTopY + 0.5, deskZ + 4),
+		Color3.fromRGB(163, 62, 62),
+		Enum.Material.Neon
+	)
+	rejectButton.CanCollide = false
+	newPrompt(rejectButton, "RejectPrompt", "Отклонить", "Пациент", 8)
 
 	local spawnLocation = Instance.new("SpawnLocation")
 	spawnLocation.Name = "PlayerSpawn"
 	spawnLocation.Size = Vector3.new(6, 1, 6)
-	spawnLocation.CFrame = CFrame.new(-45, BASE_Y + 0.5 + MARKER_LIFT, room.center.Z)
+	spawnLocation.CFrame = CFrame.new(-58, BASE_Y + 0.5 + MARKER_LIFT, deskZ)
 	spawnLocation.Anchored = true
 	spawnLocation.CanCollide = true
 	spawnLocation.Transparency = 1
 	spawnLocation.Neutral = true
 	spawnLocation.Parent = parent
+
+	return desk
+end
+
+--------------------------------------------------------------------------------
+-- Treatment room equipment
+--------------------------------------------------------------------------------
+-- Every treatment room gets the same medicine machine (three buttons, one per
+-- PatientData medicine) plus one themed prop so the four rooms still read as
+-- different places. The machine is the generalized version of the roadmap's
+-- stage 5 Basic Medical pattern (3 buttons, a timer, right/wrong), applied to
+-- all four rooms at once rather than to Basic Medical alone: stages 8/11/12
+-- can later replace any one room's handler with something more specific
+-- through RoomRegistry.setHandler without touching this geometry.
+
+local TREATMENT_ROOM_IDS = { BasicMedical = true, XRay = true, HeartMonitor = true, Surgery = true }
+
+local MEDICINE_IDS = { "MedicineA", "MedicineB", "MedicineC" }
+local MEDICINE_LABELS = { MedicineA = "A", MedicineB = "B", MedicineC = "C" }
+local MEDICINE_COLORS = {
+	MedicineA = Color3.fromRGB(90, 170, 210),
+	MedicineB = Color3.fromRGB(210, 170, 90),
+	MedicineC = Color3.fromRGB(170, 90, 210),
+}
+
+-- Point `distance` studs from the room's centre, opposite its (single) door.
+local function backOfRoom(room, distance)
+	local outward = OUTWARD[room.doors[1].side]
+	return room.center - outward * distance
+end
+
+local function buildTreatmentMachine(parent, room)
+	local outward = OUTWARD[room.doors[1].side]
+	local machineCenter = backOfRoom(room, 8)
+
+	newPart(
+		"TreatmentCabinet",
+		parent,
+		Vector3.new(8, 6, 2.5),
+		CFrame.new(machineCenter.X, BASE_Y + 3, machineCenter.Z),
+		Color3.fromRGB(210, 214, 218),
+		Enum.Material.Metal
+	)
+
+	-- Buttons sit clear of the cabinet's front face (half-depth 1.25) plus
+	-- their own half-depth (0.3), with a small margin, towards the door so a
+	-- player walking in from the entry can reach them without circling round.
+	local buttonCenter = machineCenter + outward * 2
+	local buttonOffsets = { -2.4, 0, 2.4 }
+	for index, medicineId in ipairs(MEDICINE_IDS) do
+		local button = newPart(
+			"MedicineButton",
+			parent,
+			Vector3.new(1.6, 1.6, 0.6),
+			CFrame.new(buttonCenter.X + buttonOffsets[index], BASE_Y + 3, buttonCenter.Z),
+			MEDICINE_COLORS[medicineId],
+			Enum.Material.Neon
+		)
+		button.CanCollide = false
+		button:SetAttribute("RoomId", room.id)
+		button:SetAttribute("MedicineId", medicineId)
+
+		local prompt = Instance.new("ProximityPrompt")
+		prompt.Name = "MedicinePrompt"
+		prompt.ActionText = "Препарат " .. MEDICINE_LABELS[medicineId]
+		prompt.ObjectText = room.name
+		prompt.HoldDuration = 0
+		prompt.MaxActivationDistance = 8
+		prompt.RequiresLineOfSight = false
+		-- Off by default: TreatmentRooms.server.lua enables all three only
+		-- while that room has a patient waiting on a choice.
+		prompt.Enabled = false
+		prompt.Parent = button
+	end
+end
+
+-- One simple themed prop per room, standing between the door and the
+-- machine, so each room still looks like what its sign says even though the
+-- interactive part (the medicine machine) is identical for now.
+local function buildRoomProp(parent, room)
+	if room.id == "BasicMedical" then
+		newPart(
+			"ExamTable",
+			parent,
+			Vector3.new(2, 2.4, 5),
+			CFrame.new(room.center.X, BASE_Y + 1.2, room.center.Z),
+			Color3.fromRGB(225, 228, 230),
+			Enum.Material.SmoothPlastic
+		)
+	elseif room.id == "XRay" then
+		newPart(
+			"XRayArm",
+			parent,
+			Vector3.new(1, 6, 1),
+			CFrame.new(room.center.X - 3, BASE_Y + 3, room.center.Z),
+			Color3.fromRGB(180, 184, 190),
+			Enum.Material.Metal
+		)
+		newPart(
+			"XRayPanel",
+			parent,
+			Vector3.new(3, 3, 0.4),
+			CFrame.new(room.center.X - 3, BASE_Y + 6.2, room.center.Z),
+			Color3.fromRGB(40, 42, 46),
+			Enum.Material.Metal
+		)
+	elseif room.id == "HeartMonitor" then
+		newPart(
+			"MonitorBed",
+			parent,
+			Vector3.new(2.4, 1.6, 5.5),
+			CFrame.new(room.center.X, BASE_Y + 0.8, room.center.Z),
+			Color3.fromRGB(225, 228, 230),
+			Enum.Material.SmoothPlastic
+		)
+		newPart(
+			"MonitorScreen",
+			parent,
+			Vector3.new(1.6, 1.4, 0.3),
+			CFrame.new(room.center.X + 2.4, BASE_Y + 4, room.center.Z - 2),
+			Color3.fromRGB(30, 60, 40),
+			Enum.Material.Neon
+		)
+	elseif room.id == "Surgery" then
+		newPart(
+			"SurgeryTable",
+			parent,
+			Vector3.new(2.4, 2, 5.5),
+			CFrame.new(room.center.X, BASE_Y + 1, room.center.Z),
+			Color3.fromRGB(210, 214, 218),
+			Enum.Material.Metal
+		)
+		newPart(
+			"SurgeryLamp",
+			parent,
+			Vector3.new(2, 0.6, 2),
+			CFrame.new(room.center.X, BASE_Y + WALL_HEIGHT - 1.5, room.center.Z),
+			Color3.fromRGB(245, 245, 235),
+			Enum.Material.Neon
+		)
+	end
 end
 
 --------------------------------------------------------------------------------
@@ -585,6 +807,9 @@ local function buildRoom(parent, room)
 		buildLobbyFurniture(structure, room)
 	elseif room.id == "Reception" then
 		buildReceptionFurniture(structure, room)
+	elseif TREATMENT_ROOM_IDS[room.id] then
+		buildTreatmentMachine(structure, room)
+		buildRoomProp(structure, room)
 	end
 
 	model.PrimaryPart = floor
@@ -667,7 +892,7 @@ local function build()
 
 	local hospital = Instance.new("Model")
 	hospital.Name = "Hospital"
-	hospital:SetAttribute("LayoutVersion", 3)
+	hospital:SetAttribute("LayoutVersion", 4)
 	hospital.Parent = Workspace
 
 	buildCorridor(hospital)
