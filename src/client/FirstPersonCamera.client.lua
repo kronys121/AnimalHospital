@@ -1,78 +1,150 @@
---[[
-	Animal Hospital - first-person view.
-
-	LocalScript. Locks the camera to first person for the whole session, per
-	the brief asking for a first-person view of the hospital.
-
-	Where to put it:
-		StarterPlayer -> StarterPlayerScripts -> LocalScript named
-		"FirstPersonCamera" -> paste this file in.
-
-	CameraMode.LockFirstPerson switches to Roblox's own first-person camera
-	(not a custom rig) and stops the player scrolling back out to third
-	person. On its own that is NOT full FPS mouselook, though: the mouse
-	cursor stays free (visible, click-to-interact) unless MouseBehavior is
-	also set to LockCenter.
-
-	Two rounds of fixes already went into the block below - both are still
-	needed, they fix different things:
-
-	1. Only assign MouseBehavior when it is not already LockCenter, not
-	   unconditionally every frame. Reassigning it to the value it already
-	   holds still re-arms the lock as far as the engine is concerned, which
-	   resets whatever it uses internally to track mouse movement since the
-	   lock was established - doing that 60+ times a second means every
-	   frame's rotation gets thrown away before the camera script can read
-	   it. That is a stuck camera everywhere, not just near UI.
-
-	2. Clear GuiService.SelectedObject whenever something sets it. Roblox
-	   tracks a "currently selected" GuiObject for gamepad/keyboard UI
-	   navigation, and ProximityPrompt participates in that system - once its
-	   on-screen prompt becomes the selected object (which happens exactly
-	   when the, invisible but still logically positioned, locked cursor sits
-	   over it, i.e. when the player is looking straight at whatever the
-	   prompt is on), Roblox's own camera handling treats that as "the player
-	   is now interacting with a UI control" and stops turning the camera
-	   from mouse movement - exactly the reported "freezes over the prompt,
-	   fine everywhere else". This has nothing to do with MouseBehavior and
-	   the first fix could not have touched it.
-]]
-
+-- src/client/FirstPersonCamera.client.lua
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-local GuiService = game:GetService("GuiService")
+local UserInputService = game:GetService("UserInputService")
+local ProximityPromptService = game:GetService("ProximityPromptService")
 
 local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
 
-local function applyFirstPerson()
-	player.CameraMode = Enum.CameraMode.LockFirstPerson
-end
+-- Полностью отключаем видимость курсора мыши
+UserInputService.MouseIconEnabled = false
 
-applyFirstPerson()
+-- Настройки обзора и чувствительности
+local SENSITIVITY = 0.0025
+local MIN_PITCH = -math.rad(80) -- взгляд вниз
+local MAX_PITCH = math.rad(80)  -- взгляд вверх
+local EYE_OFFSET = Vector3.new(0, 0.25, 0) -- смещение камеры на уровень глаз
 
--- CameraMode is reset to the default on respawn, so it has to be reapplied
--- every time a new character (and camera) appears - the shift begins with
--- one spawn, but nothing here assumes that stays true forever.
-player.CharacterAdded:Connect(applyFirstPerson)
+local yaw = 0
+local pitch = 0
 
--- Checked every frame, but only ever WRITES when something has actually
--- drifted from what first person wants - see fix 1 above for why an
--- unconditional write, even to the same value, breaks mouselook. All of it
--- is skipped while Roblox's own Esc menu is open (GuiService.MenuIsOpen):
--- that menu needs a free, visible, selectable cursor to work at all.
-RunService.RenderStepped:Connect(function()
-	if GuiService.MenuIsOpen then
-		return
+-- Список всех стандартных частей тела персонажа (R6 и R15) для скрытия
+local BODY_PART_NAMES = {
+	Head = true,
+	Torso = true,
+	["Left Arm"] = true,
+	["Right Arm"] = true,
+	["Left Leg"] = true,
+	["Right Leg"] = true,
+	HumanoidRootPart = true,
+	UpperTorso = true,
+	LowerTorso = true,
+	LeftUpperArm = true,
+	LeftLowerArm = true,
+	LeftHand = true,
+	RightUpperArm = true,
+	RightLowerArm = true,
+	RightHand = true,
+	LeftUpperLeg = true,
+	LeftLowerLeg = true,
+	LeftFoot = true,
+	RightUpperLeg = true,
+	RightLowerLeg = true,
+	RightFoot = true,
+}
+
+-- 1. Отключаем перехват мыши у всех кнопок действий
+ProximityPromptService.PromptShown:Connect(function(prompt)
+	prompt.ClickablePrompt = false
+end)
+
+-- 2. Вращение камеры мышью (не блокируется интерфейсом)
+UserInputService.InputChanged:Connect(function(input, _gameProcessed)
+	if input.UserInputType == Enum.UserInputType.MouseMovement then
+		yaw = yaw - input.Delta.X * SENSITIVITY
+		pitch = math.clamp(pitch - input.Delta.Y * SENSITIVITY, MIN_PITCH, MAX_PITCH)
 	end
+end)
 
-	if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+-- 3. Возврат курсора в центр экрана и повторное скрытие при клике
+UserInputService.InputBegan:Connect(function(input, _gameProcessed)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
 		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
-	end
-	if UserInputService.MouseIconEnabled then
 		UserInputService.MouseIconEnabled = false
 	end
-	if GuiService.SelectedObject ~= nil then
-		GuiService.SelectedObject = nil
+end)
+
+-- Функция проверки: нужно ли скрыть эту часть персонажа
+local function shouldHidePart(instance)
+	if not instance:IsA("BasePart") then
+		return false
+	end
+
+	-- Скрываем аксессуары: волосы, шапки, очки и прочие украшения
+	if instance:FindFirstAncestorOfClass("Accessory") then
+		return true
+	end
+
+	-- Скрываем тело персонажа: руки, торс, голову, ноги
+	if BODY_PART_NAMES[instance.Name] then
+		return true
+	end
+
+	-- Если это предмет в руках (PickupSystem / Tool), оставляем видимым
+	return false
+end
+
+local function applyTransparency(instance)
+	if shouldHidePart(instance) then
+		instance.LocalTransparencyModifier = 1
+		instance:GetPropertyChangedSignal("LocalTransparencyModifier"):Connect(function()
+			instance.LocalTransparencyModifier = 1
+		end)
+	elseif instance:IsA("Decal") and instance.Parent and instance.Parent.Name == "Head" then
+		-- Скрываем лицо на голове
+		instance.Transparency = 1
+		instance:GetPropertyChangedSignal("Transparency"):Connect(function()
+			instance.Transparency = 1
+		end)
+	end
+end
+
+-- 4. Настройка персонажа при спавне
+local function setupCharacter(character)
+	local root = character:WaitForChild("HumanoidRootPart", 5)
+	if root then
+		local _, yAngle, _ = root.CFrame:ToOrientation()
+		yaw = yAngle
+		pitch = 0
+	end
+
+	-- Скрываем части тела и волосы
+	for _, desc in character:GetDescendants() do
+		applyTransparency(desc)
+	end
+
+	-- Если волосы/аксессуары прогружаются с задержкой, скрываем их при добавлении
+	character.DescendantAdded:Connect(applyTransparency)
+end
+
+if player.Character then
+	setupCharacter(player.Character)
+end
+player.CharacterAdded:Connect(setupCharacter)
+
+-- 5. Позиционирование камеры и принудительное скрытие курсора каждый кадр
+RunService:BindToRenderStep("FirstPersonCameraStep", Enum.RenderPriority.Camera.Value, function()
+	local character = player.Character
+	if not character then return end
+
+	local head = character:FindFirstChild("Head")
+	local root = character:FindFirstChild("HumanoidRootPart")
+
+	if head and root then
+		camera.CameraType = Enum.CameraType.Scriptable
+		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+
+		-- Гарантируем, что стрелочка не появится снова
+		if UserInputService.MouseIconEnabled then
+			UserInputService.MouseIconEnabled = false
+		end
+
+		-- Поворачиваем персонажа вслед за взглядом по горизонтали
+		root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, yaw, 0)
+
+		-- Камера на уровне глаз с учётом наклона вверх/вниз
+		local eyePosition = head.Position + EYE_OFFSET
+		camera.CFrame = CFrame.new(eyePosition) * CFrame.Angles(0, yaw, 0) * CFrame.Angles(pitch, 0, 0)
 	end
 end)

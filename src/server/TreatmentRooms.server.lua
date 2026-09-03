@@ -2,27 +2,9 @@
 	Animal Hospital - treatment rooms: the medicine machine.
 
 	Server Script. Wires the three MedicineButton parts BuildHospital placed
-	in each of the four treatment rooms into RoomRegistry, replacing that
-	room's stub with a real (if identical, for now) minigame: three buttons,
-	a 15-second choice window, right medicine cures, wrong or no answer in
-	time loses the patient. This is the roadmap's stage 5 Basic Medical
-	pattern, generalized to all four rooms at once rather than to Basic
-	Medical alone - the reference pattern (timer + choice + outcome) is
-	applied everywhere immediately instead of copied room by room, since the
-	brief asked for "already being able to treat them", not for Basic
-	Medical specifically.
-
-	Later stages can still give any one room its own distinct minigame by
-	calling RoomRegistry.setHandler(roomId, ...) again - that call always
-	wins, this script only sets the starting handler.
-
-	Where to put it:
-		ServerScriptService -> Script (Server) -> paste this file in,
-		alongside BuildHospital and ShiftServer.
-
-	Needs:
-		Workspace.Hospital (BuildHospital.server.lua)
-		ReplicatedStorage.Shared.RoomRegistry
+	in each of the four treatment rooms into RoomRegistry.
+	Prompts are disabled initially and only activate when a patient
+	has completed their physical examination on the exam table.
 ]]
 
 local Workspace = game:GetService("Workspace")
@@ -33,9 +15,6 @@ local RoomRegistry = require(Shared:WaitForChild("RoomRegistry"))
 
 local CHOICE_SECONDS = 15
 
--- Same ReplicatedStorage.AnimalHospital folder ShiftServer creates; reused
--- here (not recreated) so the client only ever deals with one remotes
--- folder regardless of which server script happened to create it first.
 local function ensureRemote(name)
 	local folder = ReplicatedStorage:FindFirstChild("AnimalHospital")
 	if not folder then
@@ -73,15 +52,18 @@ local function findButtons(roomId)
 	return buttons
 end
 
--- Returns a RoomRegistry handler closed over this room's three buttons.
+-- Handler закрывается поверх кнопок комнаты: включается только после осмотра
 local function makeHandler(roomId, buttons)
 	return function(patient, room)
+		-- Включаем кнопки автомата только сейчас
 		for _, button in ipairs(buttons) do
 			local prompt = button:FindFirstChild("MedicinePrompt")
 			if prompt then
+				prompt.ClickablePrompt = false
 				prompt.Enabled = true
 			end
 		end
+
 		roomChoiceStarted:FireAllClients(roomId, room.name, CHOICE_SECONDS)
 
 		local chosen = nil
@@ -93,9 +75,6 @@ local function makeHandler(roomId, buttons)
 				table.insert(
 					connections,
 					prompt.Triggered:Connect(function(_player)
-						-- First press within the window wins; later presses in
-						-- the same window (from the same or another player) are
-						-- ignored rather than overwriting the outcome.
 						if chosen == nil then
 							chosen = medicineId
 						end
@@ -112,6 +91,8 @@ local function makeHandler(roomId, buttons)
 		for _, connection in ipairs(connections) do
 			connection:Disconnect()
 		end
+
+		-- Выключаем кнопки обратно после завершения выбора
 		for _, button in ipairs(buttons) do
 			local prompt = button:FindFirstChild("MedicinePrompt")
 			if prompt then
@@ -150,6 +131,15 @@ local function main()
 	for _, roomId in ipairs(RoomRegistry.getIds()) do
 		local buttons = findButtons(roomId)
 		if buttons then
+			-- Кнопки изначально выключены до прихода и осмотра пациента
+			for _, button in ipairs(buttons) do
+				local prompt = button:FindFirstChild("MedicinePrompt")
+				if prompt then
+					prompt.ClickablePrompt = false
+					prompt.Enabled = false
+				end
+			end
+
 			RoomRegistry.setHandler(roomId, makeHandler(roomId, buttons))
 			table.insert(wired, roomId)
 		else

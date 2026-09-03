@@ -1,35 +1,13 @@
 --[[
-	Animal Hospital - Stage 2/3: the reception loop.
+	Animal Hospital - Stage 2/3 + 5: Reception loop & Treatment Room examination.
 
-	Server Script. Brings patients in one at a time, walks them to the
-	reception counter, runs the physical registration flow, and routes
-	admitted patients into a treatment room through RoomRegistry.
-
-	Where to put it:
-		ServerScriptService -> Script (Server) -> paste this file in,
-		alongside PickupSystem (a sibling ModuleScript it requires).
-
-	Needs, and waits for:
-		Workspace.Hospital                          (BuildHospital.server.lua)
-		ReplicatedStorage.Shared.RoomRegistry
-		ReplicatedStorage.Shared.PatientData
-
-	Creates ReplicatedStorage.AnimalHospital with the RemoteEvents the
-	reception UI listens to, so there is nothing to wire up by hand.
-
-	Patients are anchored models moved with PivotTo along waypoints derived
-	from the markers BuildHospital places. No Humanoid and no physics: a
-	patient can never get stuck on geometry, fall over, or wander off, which
-	matters more than convincing walk animation at this stage.
-
-	Registration is physical, not a UI button: photograph the patient with
-	the desk camera (the photo appears on the desk, pickable and placeable
-	back down), take the photo's information to the computer, collect the
-	printed card from the printer, and hand it to the patient to admit them.
-	Rejecting needs none of that - it is a button right on the counter.
-	Every step is a ProximityPrompt, checked and driven server-side; the
-	client has no say in any of it beyond standing close enough to trigger
-	one.
+	Server Script. Manages:
+	1. Spawning patients & physical registration at reception.
+	2. Escorting admitted patients into treatment rooms.
+	3. Patient lying down on the examination table/bed.
+	4. Interactive examination ([E] Обследовать).
+	5. Triggering the medicine machine minigame only after examination.
+	6. Patient getting up and leaving to exit if cured.
 ]]
 
 local Workspace = game:GetService("Workspace")
@@ -48,23 +26,12 @@ local PickupSystem = require(script.Parent:WaitForChild("PickupSystem"))
 
 local WALK_SPEED = 9
 local NEXT_PATIENT_DELAY = 3
-
--- Placeholder only. Stage 4 brings the real shift timer and the -1/sec idle
--- penalty; until then this just stops a forgotten patient from parking at the
--- counter forever and stalling the loop during a test session.
 local DECISION_TIMEOUT = 90
-
--- How long to keep trying for a free treatment room before giving up and
--- sending an admitted patient home.
 local ROOM_WAIT_TIMEOUT = 20
 
 local TWITCH_MIN_GAP, TWITCH_MAX_GAP = 2.0, 4.5
 local SPEAK_MIN_GAP, SPEAK_MAX_GAP = 4.0, 7.0
 local SPEAK_DURATION = 2.5
-
--- How long the computer takes to file the card before the printer will hand
--- it over. Long enough to read as "processing", short enough not to stall
--- the queue.
 local CARD_PRINT_SECONDS = 2
 
 local rng = Random.new()
@@ -103,9 +70,6 @@ local function ensureRemotes()
 end
 
 local remotes = ensureRemotes()
-
--- Remembered so a player joining mid-patient still gets a registration card
--- instead of an empty screen until the next arrival.
 local atCounter = nil
 
 --------------------------------------------------------------------------------
@@ -121,8 +85,6 @@ local function findDescendant(root, name)
 	return nil
 end
 
--- Everything below is read off the geometry rather than hardcoded, so moving
--- a room in BuildHospital's ROOMS table moves the patients with it.
 local world = {}
 
 local function resolveWorld()
@@ -164,6 +126,7 @@ local function resolveWorld()
 	local printer = findDescendant(reception, "Printer")
 	local cardTray = findDescendant(reception, "CardTray")
 	local rejectButton = findDescendant(reception, "RejectButton")
+
 	if
 		not (
 			spawnMarker
@@ -179,9 +142,7 @@ local function resolveWorld()
 			and rejectButton
 		)
 	then
-		return false,
-			"Hospital is missing one of PatientSpawn / EntryPoint / ReceptionDesk / Floor / "
-				.. "ReceptionCamera / PhotoTray / ComputerDesk / Printer / CardTray / RejectButton"
+		return false, "Hospital is missing reception furniture / markers"
 	end
 
 	world.floorY = lobbyFloor.Position.Y + lobbyFloor.Size.Y / 2
@@ -190,7 +151,6 @@ local function resolveWorld()
 	world.receptionZ = receptionEntry.Position.Z
 	world.receptionEntryX = receptionEntry.Position.X
 	world.corridorZ = corridorEntry.Position.Z
-	-- Patients queue on the lobby side of the counter, facing the window.
 	world.counterX = desk.Position.X + desk.Size.X / 2 + 3
 
 	world.cameraPrompt = camera:FindFirstChild("PhotoPrompt")
@@ -199,10 +159,11 @@ local function resolveWorld()
 	world.printerPrompt = printer:FindFirstChild("PrinterPrompt")
 	world.cardHome = cardTray.CFrame
 	world.rejectPrompt = rejectButton:FindFirstChild("RejectPrompt")
+
 	if
 		not (world.cameraPrompt and world.computerPrompt and world.printerPrompt and world.rejectPrompt)
 	then
-		return false, "Reception furniture is missing one of its ProximityPrompts"
+		return false, "Reception furniture is missing ProximityPrompts"
 	end
 
 	return true
@@ -211,10 +172,6 @@ end
 --------------------------------------------------------------------------------
 -- Patient model
 --------------------------------------------------------------------------------
--- An upright, blocky animal about 6 studs tall. The height is not arbitrary:
--- the reception counter is 3 studs with glass above it, so a patient's head
--- has to sit above 3 studs or the player cannot see the animal they are meant
--- to be inspecting.
 
 local BODY = {
 	legHeight = 1.8,
@@ -247,8 +204,6 @@ local function buildPatientModel(patient)
 	local model = Instance.new("Model")
 	model.Name = ("Patient_%d"):format(patient.id)
 
-	-- Local space: feet at Y = 0, the animal faces -Z, which is the direction
-	-- CFrame.lookAt points a part's front at.
 	local function place(name, size, offset, color, material)
 		return newPart(name, model, size * scale, offset * scale, color, material)
 	end
@@ -269,8 +224,6 @@ local function buildPatientModel(patient)
 	place("EarLeft", Vector3.new(0.45, earHeight, 0.25), Vector3.new(-0.55, BODY.headY + 0.8 + earHeight / 2, 0), skin)
 	place("EarRight", Vector3.new(0.45, earHeight, 0.25), Vector3.new(0.55, BODY.headY + 0.8 + earHeight / 2, 0), skin)
 
-	-- Teeth are the tooManyTeeth trait's whole tell, and the one anomaly a
-	-- photo can freeze and prove.
 	local toothColor = Color3.fromRGB(245, 245, 235)
 	if PatientData.hasTrait(patient, "tooManyTeeth") then
 		local count = 8
@@ -334,7 +287,7 @@ local function buildPatientModel(patient)
 	corner.CornerRadius = UDim.new(0, 8)
 	corner.Parent = bubbleLabel
 
-	return model, BODY.bodyY * scale
+	return model, BODY.bodyY * scale, scale
 end
 
 --------------------------------------------------------------------------------
@@ -356,7 +309,6 @@ local function walkPath(actor, waypoints)
 			local direction = flat.Unit
 			local step = math.min(WALK_SPEED * dt, distance)
 			walked = walked + step
-			-- A small bob sells the walk without needing a rig or animations.
 			local bob = math.abs(math.sin(walked * 1.6)) * 0.12
 			local position = Vector3.new(
 				pivot.Position.X + direction.X * step,
@@ -367,7 +319,6 @@ local function walkPath(actor, waypoints)
 		end
 	end
 	if model.Parent then
-		-- Land exactly on the walking height, keeping the facing from the last step.
 		local pivot = model:GetPivot()
 		model:PivotTo((pivot - pivot.Position) + Vector3.new(pivot.Position.X, actor.baseY, pivot.Position.Z))
 	end
@@ -383,7 +334,7 @@ local function faceDirection(actor, direction)
 end
 
 --------------------------------------------------------------------------------
--- Idle behaviour: the live-only anomaly tells
+-- Idle behaviour
 --------------------------------------------------------------------------------
 
 local function startIdleBehaviour(actor)
@@ -486,37 +437,18 @@ local function pathRoomToExit(entryPart)
 end
 
 --------------------------------------------------------------------------------
--- Registration flow: camera -> photo -> computer -> printer -> card -> patient
+-- Registration flow
 --------------------------------------------------------------------------------
--- Admitting a patient is a small chain of world interactions rather than a UI
--- button; rejecting stays a single button on the counter, since it needs
--- none of the paperwork. `session` is the patient currently at the counter;
--- everything here reads and writes it, and the prompt handlers below are
--- connected once (the furniture is static) and just check it on every press.
 
 local awaitingPatientId = nil
 local submitted = nil
 local session = nil
-
--- Physical items, created once in setupRegistrationFlow and reused for every
--- patient (reset between them) rather than spawned fresh each time.
 local photoItem, cardItem
 
 local function sendFeedback(player, text)
 	remotes.Feedback:FireClient(player, text)
 end
 
--- The photo/card parts are flat and thin (built to lie on the desk, shown on
--- their Top face), but PickupSystem holds an item in front of the player's
--- Head with no extra rotation, so while held it faces whichever way the
--- player happens to be looking, not necessarily up. Rather than guess that
--- rotation, buildPhotoItem/buildCardItem put the same display on three faces
--- (Top, Front, Back), so one of them faces the camera in both poses. These
--- helpers loop over every SurfaceGui on the part rather than assuming one.
-
--- Same framing technique the client's old photo preview used: aim from the
--- model's own LookVector so the animal faces the shot whichever way it
--- happens to be standing.
 local function renderPhoto(part, patientModel)
 	for _, gui in ipairs(part:GetChildren()) do
 		if gui:IsA("SurfaceGui") then
@@ -571,9 +503,6 @@ local function setCardText(text)
 	end
 end
 
--- Reset before each new patient: force both items back to the desk (even if
--- someone is mid-carry) so a leftover photo or card from the last patient
--- never bleeds into the next one's flow.
 local function resetRegistration(patient, model)
 	session = { patient = patient, model = model, photographed = false, cardPrinting = false, cardPrinted = false }
 
@@ -591,9 +520,6 @@ local function clearSession()
 	session = nil
 end
 
--- Attaches the "hand over the card" prompt to this patient specifically -
--- each patient is a fresh model, so this runs once per arrival rather than
--- being set up in setupRegistrationFlow with the static furniture.
 local function attachHandoverPrompt(actor)
 	local prompt = Instance.new("ProximityPrompt")
 	prompt.Name = "HandoverPrompt"
@@ -602,6 +528,7 @@ local function attachHandoverPrompt(actor)
 	prompt.HoldDuration = 0
 	prompt.MaxActivationDistance = 8
 	prompt.RequiresLineOfSight = false
+	prompt.ClickablePrompt = false
 	prompt.Parent = actor.model.PrimaryPart
 
 	prompt.Triggered:Connect(function(player)
@@ -631,9 +558,12 @@ local function waitForDecision(patientId)
 	return decision
 end
 
--- Connected once; the furniture and its prompts persist across patients, so
--- this only needs wiring up a single time in setupRegistrationFlow.
 local function connectRegistrationPrompts()
+	world.cameraPrompt.ClickablePrompt = false
+	world.computerPrompt.ClickablePrompt = false
+	world.printerPrompt.ClickablePrompt = false
+	world.rejectPrompt.ClickablePrompt = false
+
 	world.cameraPrompt.Triggered:Connect(function(player)
 		if not session then
 			return
@@ -675,7 +605,7 @@ local function connectRegistrationPrompts()
 			return
 		end
 		if cardItem.Transparency == 0 then
-			return -- already collected from the printer
+			return
 		end
 		setCardText(session.patient.name)
 		cardItem.Transparency = 0
@@ -691,14 +621,6 @@ local function connectRegistrationPrompts()
 	end)
 end
 
--- The two carryable items share this pickup/place wiring: a Pickup prompt
--- that succeeds through PickupSystem, and a Place prompt that always
--- succeeds (you can put down whatever you are holding, wherever you are).
--- PickupSystem.register is handed both prompts and keeps exactly one of them
--- enabled from then on - this file never touches ProximityPrompt.Enabled on
--- either of them again, since doing that from two places (a caller poking
--- .Enabled directly *and* PickupSystem reacting to hold state) is exactly
--- what let both prompts end up enabled together before.
 local function wirePickup(part, homeCFrame)
 	local pickupPrompt = Instance.new("ProximityPrompt")
 	pickupPrompt.Name = "PickupPrompt"
@@ -706,6 +628,7 @@ local function wirePickup(part, homeCFrame)
 	pickupPrompt.HoldDuration = 0
 	pickupPrompt.MaxActivationDistance = 8
 	pickupPrompt.RequiresLineOfSight = false
+	pickupPrompt.ClickablePrompt = false
 	pickupPrompt.Parent = part
 
 	local placePrompt = Instance.new("ProximityPrompt")
@@ -714,6 +637,7 @@ local function wirePickup(part, homeCFrame)
 	placePrompt.HoldDuration = 0
 	placePrompt.MaxActivationDistance = 8
 	placePrompt.RequiresLineOfSight = false
+	placePrompt.ClickablePrompt = false
 	placePrompt.Parent = part
 
 	PickupSystem.register(part, homeCFrame, { pickup = pickupPrompt, place = placePrompt })
@@ -728,11 +652,6 @@ local function wirePickup(part, homeCFrame)
 	end)
 end
 
--- Top: visible resting flat on the desk. Front/Back: whichever one ends up
--- facing the player is visible while held, since a held item inherits the
--- holder's Head orientation with no extra rotation applied (see the note
--- above renderPhoto) - putting the same content on both sides means it does
--- not matter which one that turns out to be.
 local DISPLAY_FACES = { Enum.NormalId.Top, Enum.NormalId.Front, Enum.NormalId.Back }
 
 local function addDisplayFace(part, face)
@@ -807,7 +726,7 @@ local function setupRegistrationFlow()
 end
 
 --------------------------------------------------------------------------------
--- Treatment
+-- Examination Table & Treatment Loop
 --------------------------------------------------------------------------------
 
 local function despawn(actor)
@@ -828,8 +747,92 @@ local function claimRoom()
 	return nil
 end
 
--- Runs on its own thread so the next patient can walk up to the counter while
--- this one is still being treated.
+-- Поиск смотрового стола / кушетки в модели кабинета
+local function findBedInRoom(roomId)
+	local model = RoomRegistry.getModel(roomId)
+	if not model then
+		return nil
+	end
+
+	local candidateNames = {
+		"ExamTable",
+		"Bed",
+		"ExaminationTable",
+		"TreatmentTable",
+		"PatientBed",
+		"Table",
+		"InteractionZone",
+	}
+
+	for _, name in ipairs(candidateNames) do
+		for _, descendant in ipairs(model:GetDescendants()) do
+			if descendant.Name == name then
+				if descendant:IsA("BasePart") then
+					return descendant
+				elseif descendant:IsA("Model") then
+					return descendant.PrimaryPart or descendant:FindFirstChildWhichIsA("BasePart")
+				end
+			end
+		end
+	end
+
+	for _, descendant in ipairs(model:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			local lower = descendant.Name:lower()
+			if (lower:find("bed") or lower:find("table")) and not lower:find("button") and not lower:find("wall") and not lower:find("floor") and not descendant:GetAttribute("MedicineId") then
+				return descendant
+			end
+		end
+	end
+
+	return nil
+end
+
+-- Расчёт точки и ориентации лежащего на спине пациента на столе
+local function getBedLayCFrame(bedPart, scale)
+	local bedTopY = bedPart.Position.Y + bedPart.Size.Y / 2
+	local bodyHalfThickness = 0.8 * scale + 0.1
+	local layPos = Vector3.new(bedPart.Position.X, bedTopY + bodyHalfThickness, bedPart.Position.Z)
+
+	local bedRotation = bedPart.CFrame.Rotation
+	if bedPart.Size.X > bedPart.Size.Z then
+		return CFrame.new(layPos) * bedRotation * CFrame.Angles(0, math.rad(90), 0) * CFrame.Angles(math.rad(-90), 0, 0)
+	else
+		return CFrame.new(layPos) * bedRotation * CFrame.Angles(math.rad(-90), 0, 0)
+	end
+end
+
+-- Интерактивный осмотр пациента на кушетке
+local function conductExamination(actor, bedPart)
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "ExaminePrompt"
+	prompt.ActionText = "Обследовать"
+	prompt.ObjectText = actor.data.name
+	prompt.HoldDuration = 1.2
+	prompt.MaxActivationDistance = 9
+	prompt.RequiresLineOfSight = false
+	prompt.ClickablePrompt = false
+	prompt.Parent = actor.model.PrimaryPart or bedPart
+
+	local examined = false
+	local connection
+	connection = prompt.Triggered:Connect(function(player)
+		examined = true
+		sendFeedback(player, ("Осмотр завершён: %s готов к лечению. Выберите препарат в автомате!"):format(actor.data.name))
+	end)
+
+	while not examined and actor.model.Parent do
+		task.wait(0.1)
+	end
+
+	if connection then
+		connection:Disconnect()
+	end
+	if prompt.Parent then
+		prompt:Destroy()
+	end
+end
+
 local function escortToTreatment(actor)
 	local roomId = claimRoom()
 	if not roomId then
@@ -847,9 +850,41 @@ local function escortToTreatment(actor)
 		return
 	end
 
+	-- 1. Идём от ресепшена к двери кабинета
 	walkPath(actor, pathCounterToRoom(entryPart))
 	faceDirection(actor, Vector3.new(0, 0, world.corridorZ - entryPart.Position.Z))
 
+	local bedPart = findBedInRoom(roomId)
+	local standPos
+
+	if bedPart then
+		-- Вычисляем точку рядом со столом со стороны двери
+		local dirToEntry = (entryPart.Position - bedPart.Position)
+		local flatDir = Vector3.new(dirToEntry.X, 0, dirToEntry.Z)
+		if flatDir.Magnitude < 1e-3 then
+			flatDir = Vector3.new(0, 0, 1)
+		else
+			flatDir = flatDir.Unit
+		end
+
+		local offsetDistance = math.max(bedPart.Size.X, bedPart.Size.Z) / 2 + 2.4
+		standPos = point(bedPart.Position.X + flatDir.X * offsetDistance, bedPart.Position.Z + flatDir.Z * offsetDistance)
+
+		-- 2. Заходим внутрь кабинета и подходим к кушетке
+		walkPath(actor, {
+			point(entryPart.Position.X, standPos.Z),
+			standPos,
+		})
+
+		-- 3. Пациент ложится на кушетку
+		local layCFrame = getBedLayCFrame(bedPart, actor.scale or 1)
+		actor.model:PivotTo(layCFrame)
+
+		-- 4. Осмотр пациента игроком ([E] Обследовать)
+		conductExamination(actor, bedPart)
+	end
+
+	-- 5. ТОЛЬКО ПОСЛЕ ОСМОТРА запускаем автомат препаратов и выбор лекарства
 	local room = RoomRegistry.get(roomId)
 	local sent = RoomRegistry.sendPatient(roomId, actor.data, function(outcome)
 		remotes.RoomOutcome:FireAllClients({
@@ -862,16 +897,27 @@ local function escortToTreatment(actor)
 		print(("[Shift] %s in %s -> %s"):format(actor.data.name, roomId, outcome.status))
 
 		if outcome.status == RoomRegistry.Outcome.Cured then
+			-- Пациент встаёт с кушетки
+			if standPos then
+				actor.model:PivotTo(CFrame.new(standPos) * CFrame.lookAt(standPos, entryPart.Position).Rotation)
+				task.wait(0.4)
+				-- Идёт от кушетки к двери
+				walkPath(actor, {
+					point(entryPart.Position.X, standPos.Z),
+					point(entryPart.Position.X, entryPart.Position.Z),
+				})
+			end
+			-- Идёт по коридору на выход
 			walkPath(actor, pathRoomToExit(entryPart))
 		else
-			task.wait(1.5)
+			-- Пациент не выжил / неверный препарат
+			task.wait(2.0)
 		end
 		despawn(actor)
 	end)
 
 	if not sent then
-		-- claimRoom saw the room free a moment ago and something took it since.
-		warn(("[Shift] %s was taken before %s could enter"):format(roomId, actor.data.name))
+		warn(("[Shift] %s was taken before %s could be treated"):format(roomId, actor.data.name))
 		walkPath(actor, pathRoomToExit(entryPart))
 		despawn(actor)
 	end
@@ -883,12 +929,13 @@ end
 
 local function serveOnePatient()
 	local patient = PatientData.generate()
-	local model, pivotHeight = buildPatientModel(patient)
+	local model, pivotHeight, scale = buildPatientModel(patient)
 
 	local actor = {
 		data = patient,
 		model = model,
 		baseY = world.floorY + pivotHeight,
+		scale = scale,
 		idle = false,
 	}
 
@@ -919,8 +966,6 @@ local function serveOnePatient()
 	local correct = PatientData.isDecisionCorrect(patient, decision)
 	local admitted = decision == "admit"
 
-	-- The round is over, so the answer can safely go to the client now: this
-	-- is what makes the result panel teach the player anything.
 	remotes.DecisionResult:FireAllClients({
 		patientId = patient.id,
 		patientName = patient.name,
@@ -934,8 +979,6 @@ local function serveOnePatient()
 	if admitted and not patient.isAnomaly then
 		task.spawn(escortToTreatment, actor)
 	else
-		-- Admitting an anomaly is where stage 6 puts the screamer. For now the
-		-- creature simply turns around and leaves.
 		task.spawn(function()
 			walkPath(actor, pathOutFromCounter())
 			despawn(actor)
