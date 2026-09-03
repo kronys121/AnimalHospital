@@ -459,6 +459,12 @@ local function newPrompt(parent, name, actionText, objectText, maxDistance)
 	prompt.HoldDuration = 0
 	prompt.MaxActivationDistance = maxDistance or 8
 	prompt.RequiresLineOfSight = false
+	-- The default prompt UI is clickable, and a clickable prompt takes the
+	-- mouse as soon as it sits under the (locked, invisible) first-person
+	-- cursor - which is exactly when the player is looking at it. E still
+	-- triggers it. The client sets this too on PromptShown; setting it here
+	-- as well means it holds even if that script never runs.
+	prompt.ClickablePrompt = false
 	prompt.Parent = parent
 	return prompt
 end
@@ -933,8 +939,9 @@ local function buildTreatmentMachine(parent, room)
 		prompt.HoldDuration = 0
 		prompt.MaxActivationDistance = 8
 		prompt.RequiresLineOfSight = false
+		prompt.ClickablePrompt = false
 		-- Off by default: TreatmentRooms.server.lua enables all three only
-		-- while that room has a patient waiting on a choice.
+		-- after the patient in that room has been examined.
 		prompt.Enabled = false
 		prompt.Parent = button
 	end
@@ -1067,6 +1074,7 @@ local function buildWard(parent, room)
 	scanPrompt.HoldDuration = 0
 	scanPrompt.MaxActivationDistance = 10
 	scanPrompt.RequiresLineOfSight = false
+	scanPrompt.ClickablePrompt = false
 	-- Off by default: TreatmentRooms enables it only while an unexamined
 	-- patient is on the bed in this room.
 	scanPrompt.Enabled = false

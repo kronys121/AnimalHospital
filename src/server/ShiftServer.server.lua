@@ -704,6 +704,9 @@ local function attachHandoverPrompt(actor)
 	prompt.HoldDuration = 0
 	prompt.MaxActivationDistance = 8
 	prompt.RequiresLineOfSight = false
+	-- Same reason as every other prompt in the build: a clickable prompt
+	-- steals the mouse in first person.
+	prompt.ClickablePrompt = false
 	prompt.Parent = actor.model.PrimaryPart
 
 	prompt.Triggered:Connect(function(player)
@@ -836,6 +839,7 @@ local function wirePickup(part, homeCFrame, trayPart, placeText)
 	pickupPrompt.HoldDuration = 0
 	pickupPrompt.MaxActivationDistance = 8
 	pickupPrompt.RequiresLineOfSight = false
+	pickupPrompt.ClickablePrompt = false
 	pickupPrompt.Parent = part
 
 	local placePrompt = Instance.new("ProximityPrompt")
@@ -844,6 +848,7 @@ local function wirePickup(part, homeCFrame, trayPart, placeText)
 	placePrompt.HoldDuration = 0
 	placePrompt.MaxActivationDistance = 8
 	placePrompt.RequiresLineOfSight = false
+	placePrompt.ClickablePrompt = false
 	placePrompt.Parent = trayPart
 
 	PickupSystem.register(part, homeCFrame, { pickup = pickupPrompt, place = placePrompt })
