@@ -1,78 +1,148 @@
 --[[
 	Animal Hospital - first-person view.
 
-	LocalScript. Locks the camera to first person for the whole session, per
-	the brief asking for a first-person view of the hospital.
+	LocalScript. Fully custom first-person camera: Roblox's own camera is
+	switched off (CameraType = Scriptable) and the view is driven from raw
+	mouse deltas instead.
 
 	Where to put it:
 		StarterPlayer -> StarterPlayerScripts -> LocalScript named
 		"FirstPersonCamera" -> paste this file in.
 
-	CameraMode.LockFirstPerson switches to Roblox's own first-person camera
-	(not a custom rig) and stops the player scrolling back out to third
-	person. On its own that is NOT full FPS mouselook, though: the mouse
-	cursor stays free (visible, click-to-interact) unless MouseBehavior is
-	also set to LockCenter.
+	Why not CameraMode.LockFirstPerson: the default ProximityPrompt UI is a
+	clickable interface element. As soon as one is on screen under the
+	(locked, invisible) cursor, Roblox's own camera script treats the mouse
+	as belonging to the UI and stops turning the camera - the reported
+	"mouse freezes over the action prompt, fine everywhere else". Two things
+	fix it together:
 
-	Two rounds of fixes already went into the block below - both are still
-	needed, they fix different things:
-
-	1. Only assign MouseBehavior when it is not already LockCenter, not
-	   unconditionally every frame. Reassigning it to the value it already
-	   holds still re-arms the lock as far as the engine is concerned, which
-	   resets whatever it uses internally to track mouse movement since the
-	   lock was established - doing that 60+ times a second means every
-	   frame's rotation gets thrown away before the camera script can read
-	   it. That is a stuck camera everywhere, not just near UI.
-
-	2. Clear GuiService.SelectedObject whenever something sets it. Roblox
-	   tracks a "currently selected" GuiObject for gamepad/keyboard UI
-	   navigation, and ProximityPrompt participates in that system - once its
-	   on-screen prompt becomes the selected object (which happens exactly
-	   when the, invisible but still logically positioned, locked cursor sits
-	   over it, i.e. when the player is looking straight at whatever the
-	   prompt is on), Roblox's own camera handling treats that as "the player
-	   is now interacting with a UI control" and stops turning the camera
-	   from mouse movement - exactly the reported "freezes over the prompt,
-	   fine everywhere else". This has nothing to do with MouseBehavior and
-	   the first fix could not have touched it.
+	1. prompt.ClickablePrompt = false on every prompt as it is shown, so the
+	   prompt stops being a mouse target at all. E still triggers it.
+	2. Reading rotation from UserInputService.InputChanged deltas and writing
+	   the camera CFrame ourselves, so nothing in the default camera pipeline
+	   can decide to skip a frame.
 ]]
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-local GuiService = game:GetService("GuiService")
+local ProximityPromptService = game:GetService("ProximityPromptService")
 
 local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
 
-local function applyFirstPerson()
-	player.CameraMode = Enum.CameraMode.LockFirstPerson
+local SENSITIVITY = 0.005
+local MIN_PITCH = math.rad(-75)
+local MAX_PITCH = math.rad(75)
+local EYE_OFFSET = Vector3.new(0, 0.5, 0)
+
+local yaw = 0
+local pitch = 0
+
+-- 1. Отключаем перехват мыши у всех кнопок действий.
+ProximityPromptService.PromptShown:Connect(function(prompt)
+	prompt.ClickablePrompt = false
+end)
+
+-- 2. Вращение камеры мышью (не блокируется интерфейсом).
+UserInputService.InputChanged:Connect(function(input, _gameProcessed)
+	if input.UserInputType == Enum.UserInputType.MouseMovement then
+		yaw = yaw - input.Delta.X * SENSITIVITY
+		pitch = math.clamp(pitch - input.Delta.Y * SENSITIVITY, MIN_PITCH, MAX_PITCH)
+	end
+end)
+
+-- 3. Прячем собственное тело, иначе оно закрывает обзор изнутри.
+local HIDDEN_PARTS = {
+	Head = true,
+	-- R6
+	Torso = true,
+	["Left Arm"] = true,
+	["Right Arm"] = true,
+	["Left Leg"] = true,
+	["Right Leg"] = true,
+	-- R15
+	UpperTorso = true,
+	LowerTorso = true,
+	LeftUpperArm = true,
+	LeftLowerArm = true,
+	LeftHand = true,
+	RightUpperArm = true,
+	RightLowerArm = true,
+	RightHand = true,
+	LeftUpperLeg = true,
+	LeftLowerLeg = true,
+	LeftFoot = true,
+	RightUpperLeg = true,
+	RightLowerLeg = true,
+	RightFoot = true,
+}
+
+local function hideInstance(instance)
+	if instance:IsA("BasePart") and HIDDEN_PARTS[instance.Name] then
+		instance.LocalTransparencyModifier = 1
+		instance:GetPropertyChangedSignal("LocalTransparencyModifier"):Connect(function()
+			instance.LocalTransparencyModifier = 1
+		end)
+	elseif instance:IsA("Decal") then
+		instance.LocalTransparencyModifier = 1
+		instance:GetPropertyChangedSignal("LocalTransparencyModifier"):Connect(function()
+			instance.LocalTransparencyModifier = 1
+		end)
+	end
 end
 
-applyFirstPerson()
+local function hideCharacter(character)
+	for _, descendant in ipairs(character:GetDescendants()) do
+		hideInstance(descendant)
+	end
+	character.DescendantAdded:Connect(hideInstance)
+end
 
--- CameraMode is reset to the default on respawn, so it has to be reapplied
--- every time a new character (and camera) appears - the shift begins with
--- one spawn, but nothing here assumes that stays true forever.
-player.CharacterAdded:Connect(applyFirstPerson)
+local function onCharacter(character)
+	hideCharacter(character)
 
--- Checked every frame, but only ever WRITES when something has actually
--- drifted from what first person wants - see fix 1 above for why an
--- unconditional write, even to the same value, breaks mouselook. All of it
--- is skipped while Roblox's own Esc menu is open (GuiService.MenuIsOpen):
--- that menu needs a free, visible, selectable cursor to work at all.
-RunService.RenderStepped:Connect(function()
-	if GuiService.MenuIsOpen then
+	-- Стартовое направление берем с самого персонажа, чтобы после спавна
+	-- камера не разворачивалась рывком.
+	local root = character:WaitForChild("HumanoidRootPart", 10)
+	if root then
+		local _, spawnYaw = root.CFrame:ToOrientation()
+		yaw = spawnYaw
+		pitch = 0
+	end
+end
+
+if player.Character then
+	onCharacter(player.Character)
+end
+player.CharacterAdded:Connect(onCharacter)
+
+-- 4. Сама камера. Приоритет Camera.Value - значит наш код выполняется
+-- вместо стандартного камерного шага, а не после него.
+RunService:BindToRenderStep("FirstPersonCameraStep", Enum.RenderPriority.Camera.Value, function()
+	local character = player.Character
+	if not character then
 		return
 	end
 
-	if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
-		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+	local head = character:FindFirstChild("Head")
+	local root = character:FindFirstChild("HumanoidRootPart")
+	if not head or not root then
+		return
 	end
-	if UserInputService.MouseIconEnabled then
-		UserInputService.MouseIconEnabled = false
+
+	camera = workspace.CurrentCamera
+	if not camera then
+		return
 	end
-	if GuiService.SelectedObject ~= nil then
-		GuiService.SelectedObject = nil
-	end
+
+	camera.CameraType = Enum.CameraType.Scriptable
+	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+	UserInputService.MouseIconEnabled = false
+
+	-- Тело поворачивается только вокруг вертикальной оси, камера - и вверх/вниз.
+	root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, yaw, 0)
+
+	local eyePosition = head.Position + EYE_OFFSET
+	camera.CFrame = CFrame.new(eyePosition) * CFrame.Angles(0, yaw, 0) * CFrame.Angles(pitch, 0, 0)
 end)
