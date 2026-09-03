@@ -101,7 +101,7 @@ local photoStatusLabel =
 
 local hintLabel = label(
 	card,
-	"Сфотографируйте пациента камерой на столе, оформите карточку на компьютере, заберите её в принтере и отдайте пациенту. Отклонить можно кнопкой на столе.",
+	"Сфотографируйте пациента камерой на столе, оформите карточку на компьютере, заберите её в принтере и отдайте пациенту. Отклонить можно кнопкой на столе. Положить фото или карточку обратно можно у самого стола.",
 	UDim2.new(1, -32, 0, 78),
 	UDim2.fromOffset(16, 104),
 	Enum.Font.Gotham,
@@ -209,11 +209,15 @@ DecisionResult.OnClientEvent:Connect(function(result)
 	showBanner(result.correct, verdict)
 end)
 
+local OUTCOME_WORDS = {
+	cured = "вылечен",
+	died = "потерян",
+	incident = "ЭТО БЫЛА АНОМАЛИЯ",
+	failed = "не обработан (сбой кабинета)",
+}
+
 RoomOutcome.OnClientEvent:Connect(function(outcome)
-	local word = outcome.status == "cured" and "вылечен" or "потерян"
-	if outcome.status == "failed" then
-		word = "не обработан (сбой кабинета)"
-	end
+	local word = OUTCOME_WORDS[outcome.status] or outcome.status
 	logLabel.Text = ("%s: %s в кабинете %s"):format(outcome.patientName, word, outcome.roomName)
 	task.delay(8, function()
 		if logLabel.Text:find(outcome.patientName, 1, true) then

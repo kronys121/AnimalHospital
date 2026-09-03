@@ -42,25 +42,36 @@ local ShiftState = {}
 local SHIFT_SECONDS = 300 -- пять минут
 local MAX_SANITY = 100
 
-local SANITY_CORRECT = 5
-local SANITY_WRONG = -15
-local SANITY_IDLE_PER_SECOND = -1
+local SANITY_CORRECT = 8
+local SANITY_WRONG = -12
+local SANITY_IDLE_PER_SECOND = -0.4
 
 -- The roadmap's -1/sec assumed a reception where admitting is one button
 -- press. Ours is physical (photograph, computer, printer, hand the card
--- over), so the paperwork itself takes tens of seconds and a raw -1/sec
--- would make the shift unwinnable by patient six. The drain therefore only
--- starts after this many seconds with the patient at the counter: doing the
--- work is free, dithering is not. Lower it to 0 for the literal roadmap
--- rule.
-local IDLE_GRACE_SECONDS = 12
+-- over, then walk the patient to a ward and treat them), so the work itself
+-- takes tens of seconds. The drain only starts after this many seconds with
+-- the patient at the counter, and at less than a point a second: doing the
+-- work is free, dithering is not. The first playtest still burned through
+-- the bar too fast, which is why the grace is 25 seconds and the rate 0.4,
+-- not 12 and 1. Set the grace to 0 and the rate to -1 for the literal
+-- roadmap rule.
+local IDLE_GRACE_SECONDS = 25
 
--- Stage 5's numbers for the room that already works. Cheaper than a decision
--- either way: what happens in the room is the machine's fault as much as the
--- player's, and a lost patient should not cost the same as letting an
--- anomaly walk in.
-local SANITY_CURED = 3
-local SANITY_DIED = -8
+-- Stage 5's numbers for the room that already works. Treatment is no longer a
+-- coin flip (scan first, then the monitor names the medicine), so curing is
+-- worth a real repair and losing a patient a real cost.
+local SANITY_CURED = 6
+local SANITY_DIED = -6
+
+-- Letting an anomaly into a ward, on top of the wrong-decision penalty. This
+-- is the expensive mistake in the game.
+local SANITY_INCIDENT = -15
+
+-- A cup of coffee, and how long before the machine will pour another one.
+-- Sanity is not a resource the player can only lose any more: there is one
+-- place in the building to get some back, and it costs a walk.
+local SANITY_COFFEE = 20
+local COFFEE_COOLDOWN_SECONDS = 45
 
 local SCORE_CORRECT = 10
 local SCORE_CURED = 15
@@ -112,6 +123,8 @@ local function newStats()
 		timeouts = 0,
 		cured = 0,
 		died = 0,
+		incidents = 0,
+		coffee = 0,
 	}
 end
 
@@ -133,6 +146,11 @@ local state = {
 
 local endedListeners = {}
 local startedListeners = {}
+
+-- When the coffee machine will pour again. Declared here, above every use:
+-- a local declared further down would leave the reads above it resolving to
+-- a nil global instead.
+local coffeeReadyAt = 0
 
 --------------------------------------------------------------------------------
 -- Snapshots
@@ -184,6 +202,8 @@ local function summary(outcome)
 			timeouts = state.stats.timeouts,
 			cured = state.stats.cured,
 			died = state.stats.died,
+			incidents = state.stats.incidents,
+			coffee = state.stats.coffee,
 		},
 	}
 end
@@ -249,6 +269,7 @@ function ShiftState.start()
 	state.draining = false
 	state.stats = newStats()
 	state.lastResult = nil
+	coffeeReadyAt = 0
 
 	print(("[Shift] смена #%d началась: %d секунд, sanity %d"):format(state.generation, SHIFT_SECONDS, MAX_SANITY))
 
@@ -369,8 +390,33 @@ function ShiftState.applyRoomOutcome(status)
 	elseif status == "died" then
 		ShiftState.bumpStat("died")
 		ShiftState.adjustSanity(SANITY_DIED)
+	elseif status == "incident" then
+		ShiftState.bumpStat("incidents")
+		ShiftState.adjustSanity(SANITY_INCIDENT)
 	end
 	-- "failed" is a broken room, not a lost patient: no sanity either way.
+end
+
+--------------------------------------------------------------------------------
+-- Coffee
+--------------------------------------------------------------------------------
+
+-- Returns true and heals if the machine was ready, false (with the seconds
+-- left) if it was not. The cooldown lives here rather than in ShiftServer so
+-- that "how sanity changes" stays in one file.
+function ShiftState.drinkCoffee()
+	if not state.running then
+		return false, 0
+	end
+	local now = os.clock()
+	if now < coffeeReadyAt then
+		return false, math.ceil(coffeeReadyAt - now)
+	end
+	coffeeReadyAt = now + COFFEE_COOLDOWN_SECONDS
+	ShiftState.bumpStat("coffee")
+	ShiftState.adjustSanity(SANITY_COFFEE)
+	broadcast()
+	return true, 0
 end
 
 --------------------------------------------------------------------------------

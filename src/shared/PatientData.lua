@@ -15,7 +15,8 @@
 			name = "Хомяк Джерри",
 			isAnomaly = false,
 			visualTraits = {},          -- trait ids, only when isAnomaly
-			correctMedicine = "MedicineA",
+			illnessId = "poisoning",    -- what the ward scanner finds
+			correctMedicine = "MedicineC",   -- decided by the illness
 		}
 
 	plus id / species fields the model builder and the reception UI need.
@@ -100,6 +101,55 @@ local GIVEN_NAMES = {
 
 PatientData.Medicines = { "MedicineA", "MedicineB", "MedicineC" }
 
+-- What the three medicine buttons in every treatment room say. Named rather
+-- than lettered so the diagnosis on the ward monitor can point at one of them
+-- by name and the player has something to match, instead of guessing between
+-- A, B and C.
+PatientData.MedicineLabels = {
+	MedicineA = "Антибиотик",
+	MedicineB = "Обезболивающее",
+	MedicineC = "Противоядие",
+}
+
+--------------------------------------------------------------------------------
+-- Illnesses
+--------------------------------------------------------------------------------
+-- Treatment is not a guess: every patient has an illness, the illness decides
+-- the right medicine, and the ward scanner is what turns the illness from a
+-- server-side secret into something written on the monitor. Until a patient
+-- has been examined the player genuinely does not know which button to press;
+-- afterwards there is exactly one right answer and it is on the screen.
+
+PatientData.Illnesses = {
+	{
+		id = "infection",
+		label = "Инфекция",
+		finding = "Температура выше нормы, воспаление.",
+		medicine = "MedicineA",
+	},
+	{
+		id = "fracture",
+		label = "Перелом лапы",
+		finding = "Кость повреждена, острая боль.",
+		medicine = "MedicineB",
+	},
+	{
+		id = "poisoning",
+		label = "Отравление",
+		finding = "В крови посторонние вещества.",
+		medicine = "MedicineC",
+	},
+}
+
+function PatientData.getIllness(illnessId)
+	for _, illness in ipairs(PatientData.Illnesses) do
+		if illness.id == illnessId then
+			return illness
+		end
+	end
+	return nil
+end
+
 --------------------------------------------------------------------------------
 -- Speech
 --------------------------------------------------------------------------------
@@ -148,6 +198,7 @@ function PatientData.generate()
 	local species = pick(PatientData.Species)
 	local givenName = pick(GIVEN_NAMES)
 	local isAnomaly = rng:NextNumber() < ANOMALY_CHANCE
+	local illness = pick(PatientData.Illnesses)
 
 	-- One or two traits, drawn without replacement so the same trait is never
 	-- rolled twice on one patient.
@@ -170,7 +221,12 @@ function PatientData.generate()
 		speciesLabel = species.label,
 		isAnomaly = isAnomaly,
 		visualTraits = visualTraits,
-		correctMedicine = pick(PatientData.Medicines),
+		illnessId = illness.id,
+		illnessLabel = illness.label,
+		illnessFinding = illness.finding,
+		-- Derived, never rolled separately: the illness IS the answer, so the
+		-- scanner cannot disagree with the button that cures.
+		correctMedicine = illness.medicine,
 	}
 end
 

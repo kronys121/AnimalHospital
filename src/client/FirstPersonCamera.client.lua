@@ -49,8 +49,25 @@ local pitch = 0
 
 local UI_FOCUS_ATTRIBUTE = "UiFocus"
 
+-- 0 to 1, set by Screamer.client.lua. This script owns the camera CFrame
+-- outright, so anything that wants to move the view has to ask for it here
+-- rather than writing the camera itself - a second writer would just be
+-- overwritten on the next frame.
+local SHAKE_ATTRIBUTE = "CameraShake"
+local SHAKE_ANGLE = math.rad(4)
+
+local shakeRandom = Random.new()
+
 local function uiFocused()
 	return player:GetAttribute(UI_FOCUS_ATTRIBUTE) == true
+end
+
+local function shakeAmount()
+	local value = player:GetAttribute(SHAKE_ATTRIBUTE)
+	if type(value) ~= "number" or value <= 0 then
+		return 0
+	end
+	return math.clamp(value, 0, 1)
 end
 
 -- 1. Отключаем перехват мыши у всех кнопок действий.
@@ -174,5 +191,18 @@ RunService:BindToRenderStep("FirstPersonCameraStep", Enum.RenderPriority.Camera.
 	root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, yaw, 0)
 
 	local eyePosition = head.Position + EYE_OFFSET
-	camera.CFrame = CFrame.new(eyePosition) * CFrame.Angles(0, yaw, 0) * CFrame.Angles(pitch, 0, 0)
+	local view = CFrame.new(eyePosition) * CFrame.Angles(0, yaw, 0) * CFrame.Angles(pitch, 0, 0)
+
+	local shake = shakeAmount()
+	if shake > 0 then
+		local amplitude = SHAKE_ANGLE * shake
+		view = view
+			* CFrame.Angles(
+				shakeRandom:NextNumber(-amplitude, amplitude),
+				shakeRandom:NextNumber(-amplitude, amplitude),
+				shakeRandom:NextNumber(-amplitude, amplitude)
+			)
+	end
+
+	camera.CFrame = view
 end)

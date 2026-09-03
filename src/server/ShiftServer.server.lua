@@ -178,6 +178,7 @@ local function resolveWorld()
 	local printer = findDescendant(reception, "Printer")
 	local cardTray = findDescendant(reception, "CardTray")
 	local rejectButton = findDescendant(reception, "RejectButton")
+	local coffeeMachine = findDescendant(reception, "CoffeeMachine")
 	if
 		not (
 			spawnMarker
@@ -191,11 +192,13 @@ local function resolveWorld()
 			and printer
 			and cardTray
 			and rejectButton
+			and coffeeMachine
 		)
 	then
 		return false,
 			"Hospital is missing one of PatientSpawn / EntryPoint / ReceptionDesk / Floor / "
-				.. "ReceptionCamera / PhotoTray / ComputerDesk / Printer / CardTray / RejectButton"
+				.. "ReceptionCamera / PhotoTray / ComputerDesk / Printer / CardTray / RejectButton / "
+				.. "CoffeeMachine"
 	end
 
 	world.floorY = lobbyFloor.Position.Y + lobbyFloor.Size.Y / 2
@@ -209,12 +212,23 @@ local function resolveWorld()
 
 	world.cameraPrompt = camera:FindFirstChild("PhotoPrompt")
 	world.photoHome = photoTray.CFrame
+	-- The tray itself, not just where it is: the "put it back" prompt hangs on
+	-- the tray rather than on the item in your hands (see wirePickup).
+	world.photoTray = photoTray
 	world.computerPrompt = computerDesk:FindFirstChild("ComputerPrompt")
 	world.printerPrompt = printer:FindFirstChild("PrinterPrompt")
 	world.cardHome = cardTray.CFrame
+	world.cardTray = cardTray
 	world.rejectPrompt = rejectButton:FindFirstChild("RejectPrompt")
+	world.coffeePrompt = coffeeMachine:FindFirstChild("CoffeePrompt")
 	if
-		not (world.cameraPrompt and world.computerPrompt and world.printerPrompt and world.rejectPrompt)
+		not (
+			world.cameraPrompt
+			and world.computerPrompt
+			and world.printerPrompt
+			and world.rejectPrompt
+			and world.coffeePrompt
+		)
 	then
 		return false, "Reception furniture is missing one of its ProximityPrompts"
 	end
@@ -394,6 +408,50 @@ local function faceDirection(actor, direction)
 	end
 	local position = model:GetPivot().Position
 	model:PivotTo(CFrame.lookAt(position, position + direction.Unit))
+end
+
+-- Lays the patient on a bed part.
+--
+-- The model is built standing, feet at local Y = 0, facing local -Z, with its
+-- PrimaryPart (and therefore its pivot) at the body's centre, BODY.bodyY *
+-- scale above the feet. Tipping it a quarter turn about its own X axis puts
+-- it on its back, face up: after the tip the model's local +Z (its back) is
+-- what points at the sky, so the half-thickness that has to clear the
+-- mattress is the body's DEPTH, not its height - that is the 0.8 * scale
+-- below, and getting it wrong is exactly what makes a patient hover over the
+-- bed instead of lying on it. The head, at local +Y, swings to local +Z,
+-- which is behind the model, so the model is aimed AWAY from where its head
+-- should end up.
+local LIE_HALF_DEPTH = 0.8
+
+local function lieOnBed(actor, bed, headDirection)
+	local model = actor.model
+	if not model.Parent then
+		return
+	end
+
+	local scale = actor.scale or 1
+	local top = bed.Position.Y + bed.Size.Y / 2
+	local restAt = Vector3.new(bed.Position.X, top + LIE_HALF_DEPTH * scale, bed.Position.Z)
+	local flat = Vector3.new(headDirection.X, 0, headDirection.Z)
+	if flat.Magnitude < 1e-3 then
+		flat = Vector3.new(0, 0, 1)
+	end
+
+	model:PivotTo(CFrame.lookAt(restAt, restAt - flat.Unit) * CFrame.Angles(math.pi / 2, 0, 0))
+	actor.onBed = true
+end
+
+-- Puts a patient that was lying down back on its feet before it walks
+-- anywhere: walkPath would otherwise carry the tipped rotation into the first
+-- step, and a patient that never has to move again would stay tipped forever.
+local function standUp(actor, position)
+	local model = actor.model
+	if not model.Parent then
+		return
+	end
+	model:PivotTo(CFrame.new(Vector3.new(position.X, actor.baseY, position.Z)))
+	actor.onBed = false
 end
 
 --------------------------------------------------------------------------------
@@ -741,17 +799,37 @@ local function connectRegistrationPrompts()
 		end
 		submitted = "reject"
 	end)
+
+	-- Coffee is the one thing that puts sanity back, and it is deliberately
+	-- not at the counter: the walk is the price. ShiftState owns the number
+	-- and the cooldown.
+	world.coffeePrompt.Triggered:Connect(function(player)
+		local poured, secondsLeft = ShiftState.drinkCoffee()
+		if poured then
+			sendFeedback(player, "Кофе. Стало полегче.")
+		elseif secondsLeft > 0 then
+			sendFeedback(player, ("Кофе ещё варится: %d с."):format(secondsLeft))
+		end
+	end)
 end
 
--- The two carryable items share this pickup/place wiring: a Pickup prompt
--- that succeeds through PickupSystem, and a Place prompt that always
--- succeeds (you can put down whatever you are holding, wherever you are).
+-- The two carryable items share this pickup/place wiring: a Pickup prompt on
+-- the item, and a Place prompt on the tray the item belongs to.
+--
+-- The place prompt used to live on the item as well, and that was a bug the
+-- player felt rather than saw: a carried item floats about 1.6 studs in front
+-- of the head, so its prompt is always the nearest one in the world and
+-- always wins E - including when the player is standing in front of a patient
+-- trying to hand the card over, or at the computer, or at the printer. Putting
+-- it on the tray means "put it back on the desk" is offered where the desk is,
+-- and nothing competes with the prompt the player is actually looking at.
+--
 -- PickupSystem.register is handed both prompts and keeps exactly one of them
 -- enabled from then on - this file never touches ProximityPrompt.Enabled on
 -- either of them again, since doing that from two places (a caller poking
 -- .Enabled directly *and* PickupSystem reacting to hold state) is exactly
 -- what let both prompts end up enabled together before.
-local function wirePickup(part, homeCFrame)
+local function wirePickup(part, homeCFrame, trayPart, placeText)
 	local pickupPrompt = Instance.new("ProximityPrompt")
 	pickupPrompt.Name = "PickupPrompt"
 	pickupPrompt.ActionText = "Взять"
@@ -762,11 +840,11 @@ local function wirePickup(part, homeCFrame)
 
 	local placePrompt = Instance.new("ProximityPrompt")
 	placePrompt.Name = "PlacePrompt"
-	placePrompt.ActionText = "Положить на стол"
+	placePrompt.ActionText = placeText or "Положить на стол"
 	placePrompt.HoldDuration = 0
 	placePrompt.MaxActivationDistance = 8
 	placePrompt.RequiresLineOfSight = false
-	placePrompt.Parent = part
+	placePrompt.Parent = trayPart
 
 	PickupSystem.register(part, homeCFrame, { pickup = pickupPrompt, place = placePrompt })
 
@@ -817,7 +895,7 @@ local function buildPhotoItem()
 		viewport.Parent = gui
 	end
 
-	wirePickup(part, world.photoHome)
+	wirePickup(part, world.photoHome, world.photoTray, "Положить фото")
 	PickupSystem.setAvailable(part, false)
 	return part
 end
@@ -847,7 +925,7 @@ local function buildCardItem()
 		label.Parent = gui
 	end
 
-	wirePickup(part, world.cardHome)
+	wirePickup(part, world.cardHome, world.cardTray, "Положить карточку")
 	PickupSystem.setAvailable(part, false)
 	return part
 end
@@ -908,6 +986,33 @@ local function escortToTreatment(actor)
 	end
 	faceDirection(actor, Vector3.new(0, 0, world.corridorZ - entryPart.Position.Z))
 
+	-- Onto the bed. Everything that happens in a ward - the scan, the
+	-- medicine, and whatever an anomaly does - happens to a patient lying
+	-- down, so this is not decoration: the room handler starts only once the
+	-- patient is actually on the bed.
+	local roomModel = RoomRegistry.getModel(roomId)
+	local bed = roomModel and findDescendant(roomModel, "PatientBed")
+	local approach = nil
+	if bed then
+		local toDoor = entryPart.Position - bed.Position
+		toDoor = Vector3.new(toDoor.X, 0, toDoor.Z)
+		if toDoor.Magnitude > 1e-3 then
+			toDoor = toDoor.Unit
+		else
+			toDoor = Vector3.new(0, 0, 1)
+		end
+		approach = bed.Position + toDoor * 4
+		walkPath(actor, { point(approach.X, approach.Z) })
+		if not actor.model.Parent then
+			despawn(actor)
+			return
+		end
+		-- Head at the far end of the bed, away from the door.
+		lieOnBed(actor, bed, -toDoor)
+	else
+		warn(("[Shift] room %s has no PatientBed - patient stays on its feet"):format(roomId))
+	end
+
 	local room = RoomRegistry.get(roomId)
 	local sent = RoomRegistry.sendPatient(roomId, actor.data, function(outcome)
 		-- A room minigame started in the previous shift can still finish after
@@ -928,6 +1033,9 @@ local function escortToTreatment(actor)
 		print(("[Shift] %s in %s -> %s"):format(actor.data.name, roomId, outcome.status))
 
 		if outcome.status == RoomRegistry.Outcome.Cured then
+			-- Off the bed first: walkPath would otherwise start the walk home
+			-- from the lying pose.
+			standUp(actor, approach or actor.model:GetPivot().Position)
 			walkPath(actor, pathRoomToExit(entryPart))
 		else
 			task.wait(1.5)
@@ -951,11 +1059,17 @@ local function serveOnePatient()
 	local patient = PatientData.generate()
 	local model, pivotHeight = buildPatientModel(patient)
 
+	local species = PatientData.getSpecies(patient.speciesId)
 	local actor = {
 		data = patient,
 		model = model,
 		baseY = world.floorY + pivotHeight,
+		-- Needed to lay this patient on a bed: every dimension of the model is
+		-- multiplied by its species scale, including the body depth that
+		-- decides how high above the mattress the pivot has to sit.
+		scale = species and species.scale or 1,
 		idle = false,
+		onBed = false,
 	}
 	liveActors[actor] = true
 
@@ -1027,11 +1141,13 @@ local function serveOnePatient()
 		return
 	end
 
-	if admitted and not patient.isAnomaly then
+	if admitted then
+		-- Anomalies go to a ward exactly like anyone else the player admitted.
+		-- That is the point: the mistake is not punished at the counter with a
+		-- creature politely leaving, it walks past you into the hospital and
+		-- lies down in a bed, and the room decides what happens next.
 		task.spawn(escortToTreatment, actor)
 	else
-		-- Admitting an anomaly is where stage 6 puts the screamer. For now the
-		-- creature simply turns around and leaves.
 		task.spawn(function()
 			walkPath(actor, pathOutFromCounter())
 			despawn(actor)

@@ -147,8 +147,8 @@ results.Visible = false
 results.Parent = screen
 
 local panel = Instance.new("Frame")
-panel.Size = UDim2.fromOffset(420, 420)
-panel.Position = UDim2.new(0.5, -210, 0.5, -210)
+panel.Size = UDim2.fromOffset(420, 468)
+panel.Position = UDim2.new(0.5, -210, 0.5, -234)
 panel.BackgroundColor3 = COLORS.panel
 panel.BorderSizePixel = 0
 panel.Parent = results
@@ -172,6 +172,8 @@ local ROWS = {
 	{ key = "rejected", title = "Отклонено" },
 	{ key = "cured", title = "Вылечено" },
 	{ key = "died", title = "Потеряно" },
+	{ key = "incidents", title = "Аномалий в палате" },
+	{ key = "coffee", title = "Выпито кофе" },
 	{ key = "sanity", title = "Рассудок в конце" },
 }
 
@@ -201,7 +203,7 @@ local hintRestart = label(
 	panel,
 	"или Enter / R",
 	UDim2.new(1, -40, 0, 16),
-	UDim2.fromOffset(20, 392),
+	UDim2.fromOffset(20, 440),
 	Enum.Font.Gotham,
 	12,
 	COLORS.muted

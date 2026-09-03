@@ -43,6 +43,9 @@ local rng = Random.new()
 RoomRegistry.Outcome = {
 	Cured = "cured",
 	Died = "died",
+	-- An anomaly was admitted and taken to a ward. Not a treatment result at
+	-- all: nothing was cured or lost, something got into the hospital.
+	Incident = "incident",
 	-- Returned when a handler errors or returns something unusable. It means
 	-- "the room is broken", not "the patient lost", and is always logged.
 	Failed = "failed",

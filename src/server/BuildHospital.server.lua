@@ -39,9 +39,23 @@
 				BreakRoom       Model
 
 	Each room model carries attributes: RoomId, DisplayName, RoomNumber (optional).
+
+	Every treatment room is furnished the same way: a bed patients are laid on
+	(PatientBed), a scanner beside it (Scanner + ScanPrompt), a medicine
+	cabinet with three named buttons (MedicineButton) and a monitor above it
+	(DiagnosisScreen) that the scan writes the diagnosis onto. Reception has
+	the camera, computer, printer, reject button and a coffee machine
+	(CoffeeMachine + CoffeePrompt). The prompts are built disabled where the
+	game turns them on itself; the scripts that own them are named in the
+	comments next to each.
 ]]
 
 local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- Only for the shared medicine names on the buttons; this script still builds
+-- geometry and nothing else.
+local PatientData = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PatientData"))
 
 --------------------------------------------------------------------------------
 -- Dimensions
@@ -449,6 +463,18 @@ local function newPrompt(parent, name, actionText, objectText, maxDistance)
 	return prompt
 end
 
+-- Decoration: a part that exists to be looked at, never to be walked into.
+-- Everything the player has to stand right up against (desks, machines, room
+-- props) is non-collidable on purpose - a solid box a stud from the camera is
+-- what makes a first-person character judder against the collision instead of
+-- settling in front of the prompt.
+local function newDecor(name, parent, size, cframe, color, material)
+	local part = newPart(name, parent, size, cframe, color, material)
+	part.CanCollide = false
+	part.CastShadow = false
+	return part
+end
+
 local function buildReceptionFurniture(parent, room)
 	local deskX = -24
 	local deskZ = room.center.Z
@@ -465,23 +491,96 @@ local function buildReceptionFurniture(parent, room)
 	-- Desk-top height, for props that sit on the counter rather than the floor.
 	local deskTopY = 3
 
-	-- Camera sits on the counter. ShiftServer/RegistrationFlow enables the
-	-- prompt only while a patient is waiting at the counter.
+	-- A lip along the patient's edge of the counter, NOT a slab across the
+	-- whole top: the photo tray, the camera stand and the reject button all
+	-- stand on that top, and a slab there would swallow them.
+	newDecor(
+		"DeskTrim",
+		parent,
+		Vector3.new(0.3, 0.5, 20),
+		CFrame.new(deskX + 1.15, BASE_Y + deskTopY + 0.25, deskZ),
+		Color3.fromRGB(86, 68, 52),
+		Enum.Material.Wood
+	)
+
+	----------------------------------------------------------------------------
+	-- Camera: a body on a short stand, a lens pointing at the patient's side of
+	-- the counter, a flash on top and a viewfinder at the back. The prompt
+	-- stays on the part named ReceptionCamera; everything else is decoration
+	-- hung around it, so nothing that looks for the camera has to change.
+	----------------------------------------------------------------------------
+
+	local cameraZ = deskZ - 4
+	local cameraY = BASE_Y + deskTopY + 1.15
+
+	newDecor(
+		"CameraStand",
+		parent,
+		Vector3.new(0.9, 0.35, 0.9),
+		CFrame.new(deskX, BASE_Y + deskTopY + 0.3, cameraZ),
+		Color3.fromRGB(28, 30, 34),
+		Enum.Material.Metal
+	)
+	newDecor(
+		"CameraPost",
+		parent,
+		Vector3.new(0.3, 0.6, 0.3),
+		CFrame.new(deskX, BASE_Y + deskTopY + 0.7, cameraZ),
+		Color3.fromRGB(60, 63, 68),
+		Enum.Material.Metal
+	)
+
 	local camera = newPart(
 		"ReceptionCamera",
 		parent,
-		Vector3.new(1.2, 1, 1.2),
-		CFrame.new(deskX, BASE_Y + deskTopY + 0.5, deskZ - 4),
-		Color3.fromRGB(40, 42, 46),
+		Vector3.new(1.7, 1.2, 1.1),
+		CFrame.new(deskX, cameraY, cameraZ),
+		Color3.fromRGB(34, 36, 40),
 		Enum.Material.Metal
 	)
 	camera.CanCollide = false
 	newPrompt(camera, "PhotoPrompt", "Сфотографировать", "Камера", 8)
 
+	-- Patients queue on the +X side of the counter, so the lens looks that way.
+	local lens = newDecor(
+		"CameraLens",
+		parent,
+		Vector3.new(0.7, 0.8, 0.8),
+		CFrame.new(deskX + 1.05, cameraY, cameraZ),
+		Color3.fromRGB(20, 22, 26),
+		Enum.Material.Metal
+	)
+	lens.Shape = Enum.PartType.Cylinder
+	local glass = newDecor(
+		"CameraGlass",
+		parent,
+		Vector3.new(0.12, 0.6, 0.6),
+		CFrame.new(deskX + 1.42, cameraY, cameraZ),
+		Color3.fromRGB(120, 180, 220),
+		Enum.Material.Glass
+	)
+	glass.Shape = Enum.PartType.Cylinder
+	newDecor(
+		"CameraFlash",
+		parent,
+		Vector3.new(0.8, 0.18, 0.5),
+		CFrame.new(deskX, cameraY + 0.7, cameraZ),
+		Color3.fromRGB(245, 245, 225),
+		Enum.Material.Neon
+	)
+	newDecor(
+		"CameraViewfinder",
+		parent,
+		Vector3.new(0.5, 0.45, 0.35),
+		CFrame.new(deskX - 0.9, cameraY + 0.15, cameraZ),
+		Color3.fromRGB(18, 18, 22),
+		Enum.Material.SmoothPlastic
+	)
+
 	-- Where the developed photo appears after a shot, and where it goes back
 	-- to when the player places it down again. Sits on the counter, not the
 	-- floor, so the Y offset is the desk top height, not 0.
-	buildMarker(
+	local photoTray = buildMarker(
 		"PhotoTray",
 		parent,
 		Vector3.new(deskX, deskTopY, deskZ - 1),
@@ -491,11 +590,21 @@ local function buildReceptionFurniture(parent, room)
 		Color3.fromRGB(235, 235, 230),
 		0.3
 	)
+	-- "Put it back on the desk" belongs to the desk, not to the thing in your
+	-- hands: a prompt on the carried item sits 1.6 studs from the camera and
+	-- wins every E press, including the one meant for the patient standing in
+	-- front of you. ShiftServer parents the place prompt here instead.
+	photoTray:SetAttribute("IsTray", true)
+
+	----------------------------------------------------------------------------
+	-- Computer: desk, tower, monitor with a lit screen, keyboard, mouse.
+	----------------------------------------------------------------------------
 
 	-- Computer desk top height, for the monitor standing on it. Declared
 	-- before its first use: a local declared further down would leave the
 	-- reference above resolving to a nil global instead.
 	local computerDeskTopY = 2.4
+	local computerZ = deskZ - 6
 
 	-- Not collidable: the player has to stand right up against these to reach
 	-- their prompts, and a solid box there is exactly what makes a first-person
@@ -503,53 +612,235 @@ local function buildReceptionFurniture(parent, room)
 	local computerDesk = newPart(
 		"ComputerDesk",
 		parent,
-		Vector3.new(3, 2.4, 3),
-		CFrame.new(-38, BASE_Y + computerDeskTopY / 2, deskZ - 6),
+		Vector3.new(3.4, 2.4, 5),
+		CFrame.new(-38, BASE_Y + computerDeskTopY / 2, computerZ),
 		Color3.fromRGB(120, 96, 74),
 		Enum.Material.Wood
 	)
 	computerDesk.CanCollide = false
-	local computerMonitor = newPart(
+	newPrompt(computerDesk, "ComputerPrompt", "Оформить карточку", "Компьютер", 8)
+
+	newDecor(
+		"ComputerTower",
+		parent,
+		Vector3.new(1, 2, 2),
+		CFrame.new(-38.6, BASE_Y + 1, computerZ + 1.6),
+		Color3.fromRGB(46, 48, 52),
+		Enum.Material.Metal
+	)
+	newDecor(
+		"TowerLight",
+		parent,
+		Vector3.new(0.12, 0.2, 0.2),
+		CFrame.new(-37.05, BASE_Y + 1.5, computerZ + 1.6),
+		Color3.fromRGB(120, 220, 140),
+		Enum.Material.Neon
+	)
+	newDecor(
+		"MonitorStand",
+		parent,
+		Vector3.new(0.9, 0.5, 0.6),
+		CFrame.new(-38, BASE_Y + computerDeskTopY + 0.25, computerZ - 1.2),
+		Color3.fromRGB(30, 32, 36),
+		Enum.Material.Metal
+	)
+	newDecor(
 		"ComputerMonitor",
 		parent,
-		Vector3.new(1.8, 1.4, 0.2),
-		CFrame.new(-38, BASE_Y + computerDeskTopY + 0.7, deskZ - 6 - 1.2),
+		Vector3.new(0.35, 2, 3.2),
+		CFrame.new(-38, BASE_Y + computerDeskTopY + 1.6, computerZ - 1.2),
 		Color3.fromRGB(20, 20, 24),
 		Enum.Material.SmoothPlastic
 	)
-	computerMonitor.CanCollide = false
-	newPrompt(computerDesk, "ComputerPrompt", "Оформить карточку", "Компьютер", 8)
+	local screen = newDecor(
+		"ComputerScreen",
+		parent,
+		Vector3.new(0.12, 1.7, 2.9),
+		CFrame.new(-37.78, BASE_Y + computerDeskTopY + 1.6, computerZ - 1.2),
+		Color3.fromRGB(24, 44, 66),
+		Enum.Material.Neon
+	)
+	-- The screen faces +X (towards whoever stands at the desk), which is the
+	-- part's Right face.
+	local screenGui = Instance.new("SurfaceGui")
+	screenGui.Name = "Display"
+	screenGui.Face = Enum.NormalId.Right
+	screenGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	screenGui.PixelsPerStud = 50
+	screenGui.LightInfluence = 0
+	screenGui.Parent = screen
 
+	local screenText = Instance.new("TextLabel")
+	screenText.Name = "Text"
+	screenText.Size = UDim2.fromScale(1, 1)
+	screenText.BackgroundTransparency = 1
+	screenText.Font = Enum.Font.Code
+	screenText.TextScaled = true
+	screenText.TextColor3 = Color3.fromRGB(150, 220, 255)
+	screenText.Text = "КАРТОТЕКА\nПАЦИЕНТОВ"
+	screenText.Parent = screenGui
+
+	newDecor(
+		"Keyboard",
+		parent,
+		Vector3.new(1, 0.12, 2.4),
+		CFrame.new(-37.4, BASE_Y + computerDeskTopY + 0.06, computerZ - 0.2),
+		Color3.fromRGB(38, 40, 44),
+		Enum.Material.SmoothPlastic
+	)
+	newDecor(
+		"Mouse",
+		parent,
+		Vector3.new(0.4, 0.2, 0.6),
+		CFrame.new(-37.4, BASE_Y + computerDeskTopY + 0.1, computerZ + 1.7),
+		Color3.fromRGB(38, 40, 44),
+		Enum.Material.SmoothPlastic
+	)
+
+	----------------------------------------------------------------------------
+	-- Printer: body, lid, paper feed, an output slot the card comes out of and
+	-- a status light.
+	----------------------------------------------------------------------------
+
+	local printerZ = deskZ + 6
 	local printer = newPart(
 		"Printer",
 		parent,
-		Vector3.new(2.4, 1.6, 2),
-		CFrame.new(-38, BASE_Y + 1.8, deskZ + 6),
-		Color3.fromRGB(220, 220, 216),
+		Vector3.new(3, 1.8, 2.6),
+		CFrame.new(-38, BASE_Y + 1.9, printerZ),
+		Color3.fromRGB(226, 226, 222),
 		Enum.Material.SmoothPlastic
 	)
 	printer.CanCollide = false
 	newPrompt(printer, "PrinterPrompt", "Забрать карточку", "Принтер", 8)
-	-- Sits on top of the printer (Y = printer centre 1.8 + half its 1.6
-	-- thickness = 2.6), not on the floor.
-	buildMarker(
+
+	newDecor(
+		"PrinterTable",
+		parent,
+		Vector3.new(3.4, 1, 3),
+		CFrame.new(-38, BASE_Y + 0.5, printerZ),
+		Color3.fromRGB(120, 96, 74),
+		Enum.Material.Wood
+	)
+	newDecor(
+		"PrinterLid",
+		parent,
+		Vector3.new(3.1, 0.35, 2.7),
+		CFrame.new(-38, BASE_Y + 2.95, printerZ),
+		Color3.fromRGB(52, 54, 58),
+		Enum.Material.SmoothPlastic
+	)
+	newDecor(
+		"PrinterFeed",
+		parent,
+		Vector3.new(2.4, 0.1, 1.4),
+		CFrame.new(-38.4, BASE_Y + 3.4, printerZ + 1),
+		Color3.fromRGB(240, 240, 236),
+		Enum.Material.SmoothPlastic
+	)
+	newDecor(
+		"PrinterSlot",
+		parent,
+		Vector3.new(0.12, 0.35, 2),
+		CFrame.new(-36.45, BASE_Y + 1.9, printerZ),
+		Color3.fromRGB(24, 24, 28),
+		Enum.Material.SmoothPlastic
+	)
+	newDecor(
+		"PrinterLight",
+		parent,
+		Vector3.new(0.12, 0.18, 0.18),
+		CFrame.new(-36.45, BASE_Y + 2.5, printerZ - 0.8),
+		Color3.fromRGB(120, 220, 140),
+		Enum.Material.Neon
+	)
+
+	-- Sits on top of the printer's lid, not on the floor and not inside the
+	-- lid: the printer body's top is at 2.8 above BASE_Y and the lid occupies
+	-- 2.775 to 3.125, so the card goes above that.
+	local cardTray = buildMarker(
 		"CardTray",
 		parent,
-		Vector3.new(-38, 2.6, deskZ + 6),
+		Vector3.new(-38, 3.15, printerZ),
 		1.6,
 		1,
 		0.05,
 		Color3.fromRGB(235, 235, 230),
 		0.3
 	)
+	cardTray:SetAttribute("IsTray", true)
 
+	----------------------------------------------------------------------------
+	-- Coffee: the one thing that puts sanity back. Machine, cups, a small
+	-- table of its own, well away from the counter so getting a cup costs a
+	-- walk.
+	----------------------------------------------------------------------------
+
+	local coffeeX, coffeeZ = -52, deskZ + 7
+	newDecor(
+		"CoffeeTable",
+		parent,
+		Vector3.new(3, 2.6, 3),
+		CFrame.new(coffeeX, BASE_Y + 1.3, coffeeZ),
+		Color3.fromRGB(120, 96, 74),
+		Enum.Material.Wood
+	)
+	local coffeeMachine = newPart(
+		"CoffeeMachine",
+		parent,
+		Vector3.new(1.8, 2.6, 1.8),
+		CFrame.new(coffeeX, BASE_Y + 2.6 + 1.3, coffeeZ),
+		Color3.fromRGB(48, 34, 30),
+		Enum.Material.Metal
+	)
+	coffeeMachine.CanCollide = false
+	newPrompt(coffeeMachine, "CoffeePrompt", "Налить кофе", "Кофемашина", 8)
+
+	newDecor(
+		"CoffeeSpout",
+		parent,
+		Vector3.new(0.3, 0.5, 0.3),
+		CFrame.new(coffeeX + 1.05, BASE_Y + 3.4, coffeeZ),
+		Color3.fromRGB(180, 184, 190),
+		Enum.Material.Metal
+	)
+	newDecor(
+		"CoffeeLight",
+		parent,
+		Vector3.new(0.16, 0.16, 0.16),
+		CFrame.new(coffeeX + 0.95, BASE_Y + 4.6, coffeeZ),
+		Color3.fromRGB(230, 150, 60),
+		Enum.Material.Neon
+	)
+	local cup = newDecor(
+		"CoffeeCup",
+		parent,
+		Vector3.new(0.6, 0.7, 0.6),
+		CFrame.new(coffeeX + 1.05, BASE_Y + 2.95, coffeeZ),
+		Color3.fromRGB(240, 240, 236),
+		Enum.Material.SmoothPlastic
+	)
+	cup.Shape = Enum.PartType.Cylinder
+	cup.Orientation = Vector3.new(0, 0, 90)
+
+	----------------------------------------------------------------------------
 	-- Reject sits on the counter itself, always reachable while a patient is
 	-- waiting; unlike admitting it needs no photo or printed card.
+	----------------------------------------------------------------------------
+
+	newDecor(
+		"RejectBase",
+		parent,
+		Vector3.new(1.6, 0.3, 1.6),
+		CFrame.new(deskX, BASE_Y + deskTopY + 0.15, deskZ + 4),
+		Color3.fromRGB(40, 42, 46),
+		Enum.Material.Metal
+	)
 	local rejectButton = newPart(
 		"RejectButton",
 		parent,
-		Vector3.new(1, 1, 1),
-		CFrame.new(deskX, BASE_Y + deskTopY + 0.5, deskZ + 4),
+		Vector3.new(1.1, 0.5, 1.1),
+		CFrame.new(deskX, BASE_Y + deskTopY + 0.55, deskZ + 4),
 		Color3.fromRGB(163, 62, 62),
 		Enum.Material.Neon
 	)
@@ -582,8 +873,11 @@ end
 
 local TREATMENT_ROOM_IDS = { BasicMedical = true, XRay = true, HeartMonitor = true, Surgery = true }
 
-local MEDICINE_IDS = { "MedicineA", "MedicineB", "MedicineC" }
-local MEDICINE_LABELS = { MedicineA = "A", MedicineB = "B", MedicineC = "C" }
+-- Names, not letters: the ward monitor names the medicine the scan calls for,
+-- and the player has to find the button that says the same thing. Taken from
+-- PatientData so the button and the diagnosis can never drift apart.
+local MEDICINE_IDS = PatientData.Medicines
+local MEDICINE_LABELS = PatientData.MedicineLabels
 local MEDICINE_COLORS = {
 	MedicineA = Color3.fromRGB(90, 170, 210),
 	MedicineB = Color3.fromRGB(210, 170, 90),
@@ -634,7 +928,7 @@ local function buildTreatmentMachine(parent, room)
 
 		local prompt = Instance.new("ProximityPrompt")
 		prompt.Name = "MedicinePrompt"
-		prompt.ActionText = "Препарат " .. MEDICINE_LABELS[medicineId]
+		prompt.ActionText = MEDICINE_LABELS[medicineId]
 		prompt.ObjectText = room.name
 		prompt.HoldDuration = 0
 		prompt.MaxActivationDistance = 8
@@ -644,36 +938,178 @@ local function buildTreatmentMachine(parent, room)
 		prompt.Enabled = false
 		prompt.Parent = button
 	end
+
+	-- The ward monitor. Blank until somebody runs the scanner; after that it
+	-- names the diagnosis and the medicine that treats it, which is the whole
+	-- point of examining a patient instead of pressing buttons at random.
+	local screen = newPart(
+		"DiagnosisScreen",
+		parent,
+		Vector3.new(7, 3.2, 0.3),
+		CFrame.new(machineCenter.X, BASE_Y + 7.6, machineCenter.Z)
+			* CFrame.Angles(0, SIGN_YAW[room.doors[1].side], 0)
+			* CFrame.new(0, 0, -1.4),
+		Color3.fromRGB(18, 24, 30),
+		Enum.Material.Neon
+	)
+	screen.CanCollide = false
+	screen.CastShadow = false
+
+	local gui = Instance.new("SurfaceGui")
+	gui.Name = "Display"
+	gui.Face = Enum.NormalId.Front
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = 50
+	gui.LightInfluence = 0
+	gui.Parent = screen
+
+	local text = Instance.new("TextLabel")
+	text.Name = "Text"
+	text.Size = UDim2.fromScale(1, 1)
+	text.BackgroundTransparency = 1
+	text.Font = Enum.Font.Code
+	text.TextScaled = true
+	text.TextColor3 = Color3.fromRGB(150, 220, 255)
+	text.Text = "ПАЦИЕНТ НЕ ОБСЛЕДОВАН"
+	text.Parent = gui
 end
 
--- One simple themed prop per room, standing between the door and the
--- machine, so each room still looks like what its sign says even though the
--- interactive part (the medicine machine) is identical for now. All are
--- decorative and not collidable: none needs to be a real physical obstacle,
--- and being solid only risks the same close-range camera judder as the
--- equipment above, since the player walks right past them on the way in.
-local function newDecor(name, parent, size, cframe, color, material)
-	local part = newPart(name, parent, size, cframe, color, material)
-	part.CanCollide = false
-	return part
-end
+-- Every treatment room gets the same bed and the same scanner: the patient is
+-- laid on the bed, the scanner is what turns their illness from a server-side
+-- secret into text on the ward monitor, and only then do the medicine buttons
+-- mean anything. On top of that each room keeps one themed prop so the four
+-- still read as different places.
+--
+-- The bed lies along the room's depth axis with its head end at the back, away
+-- from the door; ShiftServer works that direction out from the room's
+-- EntryPoint, so nothing here has to be recorded in an attribute.
+local function buildWard(parent, room)
+	local outward = OUTWARD[room.doors[1].side]
+	-- Perpendicular to `outward`, in the floor plane: the side of the bed.
+	local side = Vector3.new(outward.Z, 0, -outward.X)
+	local alongZ = math.abs(outward.Z) > 0.5
 
-local function buildRoomProp(parent, room)
+	local bedSize = alongZ and Vector3.new(3.4, 0.5, 6.6) or Vector3.new(6.6, 0.5, 3.4)
+	local frameSize = alongZ and Vector3.new(3.6, 1.3, 6.8) or Vector3.new(6.8, 1.3, 3.6)
+	local pillowSize = alongZ and Vector3.new(2.2, 0.4, 1.2) or Vector3.new(1.2, 0.4, 2.2)
+
+	local center = room.center
+	newDecor(
+		"BedFrame",
+		parent,
+		frameSize,
+		CFrame.new(center.X, BASE_Y + 0.65, center.Z),
+		Color3.fromRGB(150, 155, 162),
+		Enum.Material.Metal
+	)
+
+	-- The part patients are laid on. ShiftServer finds it by name and puts the
+	-- model's pivot half a body above this part's top face, so its size and
+	-- position here are what decide whether a patient looks like it is lying on
+	-- the bed or floating over it.
+	local mattress = newDecor(
+		"PatientBed",
+		parent,
+		bedSize,
+		CFrame.new(center.X, BASE_Y + 1.55, center.Z),
+		Color3.fromRGB(228, 232, 236),
+		Enum.Material.Fabric
+	)
+	mattress:SetAttribute("RoomId", room.id)
+
+	local pillowAt = center - outward * 2.4
+	newDecor(
+		"BedPillow",
+		parent,
+		pillowSize,
+		CFrame.new(pillowAt.X, BASE_Y + 2, pillowAt.Z),
+		Color3.fromRGB(245, 246, 248),
+		Enum.Material.Fabric
+	)
+
+	----------------------------------------------------------------------------
+	-- Scanner: stands at the bedside, on the door side so the player reaches it
+	-- on the way in.
+	----------------------------------------------------------------------------
+
+	local scannerAt = center + side * 3.6
+	newDecor(
+		"ScannerBase",
+		parent,
+		Vector3.new(2, 0.4, 2),
+		CFrame.new(scannerAt.X, BASE_Y + 0.2, scannerAt.Z),
+		Color3.fromRGB(60, 64, 70),
+		Enum.Material.Metal
+	)
+	newDecor(
+		"ScannerColumn",
+		parent,
+		Vector3.new(0.5, 3.4, 0.5),
+		CFrame.new(scannerAt.X, BASE_Y + 1.9, scannerAt.Z),
+		Color3.fromRGB(120, 126, 134),
+		Enum.Material.Metal
+	)
+	local scanner = newPart(
+		"Scanner",
+		parent,
+		Vector3.new(2.4, 2, 1.4),
+		CFrame.new(scannerAt.X, BASE_Y + 4.4, scannerAt.Z),
+		Color3.fromRGB(226, 230, 234),
+		Enum.Material.SmoothPlastic
+	)
+	scanner.CanCollide = false
+	scanner:SetAttribute("RoomId", room.id)
+
+	local scanPrompt = Instance.new("ProximityPrompt")
+	scanPrompt.Name = "ScanPrompt"
+	scanPrompt.ActionText = "Обследовать"
+	scanPrompt.ObjectText = "Сканер"
+	scanPrompt.HoldDuration = 0
+	scanPrompt.MaxActivationDistance = 10
+	scanPrompt.RequiresLineOfSight = false
+	-- Off by default: TreatmentRooms enables it only while an unexamined
+	-- patient is on the bed in this room.
+	scanPrompt.Enabled = false
+	scanPrompt.Parent = scanner
+
+	local lamp = newDecor(
+		"ScannerLamp",
+		parent,
+		Vector3.new(1.6, 0.2, 1),
+		CFrame.new(scannerAt.X, BASE_Y + 5.5, scannerAt.Z),
+		Color3.fromRGB(120, 200, 240),
+		Enum.Material.Neon
+	)
+	lamp:SetAttribute("RoomId", room.id)
+
+	----------------------------------------------------------------------------
+	-- Themed prop, opposite the scanner.
+	----------------------------------------------------------------------------
+
+	local propAt = center - side * 4.5
 	if room.id == "BasicMedical" then
 		newDecor(
-			"ExamTable",
+			"MedicineTrolley",
 			parent,
-			Vector3.new(2, 2.4, 5),
-			CFrame.new(room.center.X, BASE_Y + 1.2, room.center.Z),
+			Vector3.new(1.8, 2.6, 1.8),
+			CFrame.new(propAt.X, BASE_Y + 1.3, propAt.Z),
 			Color3.fromRGB(225, 228, 230),
 			Enum.Material.SmoothPlastic
+		)
+		newDecor(
+			"DripStand",
+			parent,
+			Vector3.new(0.25, 5, 0.25),
+			CFrame.new(propAt.X + 1.4, BASE_Y + 2.5, propAt.Z),
+			Color3.fromRGB(180, 184, 190),
+			Enum.Material.Metal
 		)
 	elseif room.id == "XRay" then
 		newDecor(
 			"XRayArm",
 			parent,
 			Vector3.new(1, 6, 1),
-			CFrame.new(room.center.X - 3, BASE_Y + 3, room.center.Z),
+			CFrame.new(propAt.X, BASE_Y + 3, propAt.Z),
 			Color3.fromRGB(180, 184, 190),
 			Enum.Material.Metal
 		)
@@ -681,41 +1117,41 @@ local function buildRoomProp(parent, room)
 			"XRayPanel",
 			parent,
 			Vector3.new(3, 3, 0.4),
-			CFrame.new(room.center.X - 3, BASE_Y + 6.2, room.center.Z),
+			CFrame.new(propAt.X, BASE_Y + 6.2, propAt.Z),
 			Color3.fromRGB(40, 42, 46),
 			Enum.Material.Metal
 		)
 	elseif room.id == "HeartMonitor" then
 		newDecor(
-			"MonitorBed",
+			"MonitorCart",
 			parent,
-			Vector3.new(2.4, 1.6, 5.5),
-			CFrame.new(room.center.X, BASE_Y + 0.8, room.center.Z),
-			Color3.fromRGB(225, 228, 230),
-			Enum.Material.SmoothPlastic
+			Vector3.new(1.6, 3, 1.6),
+			CFrame.new(propAt.X, BASE_Y + 1.5, propAt.Z),
+			Color3.fromRGB(70, 74, 80),
+			Enum.Material.Metal
 		)
 		newDecor(
 			"MonitorScreen",
 			parent,
-			Vector3.new(1.6, 1.4, 0.3),
-			CFrame.new(room.center.X + 2.4, BASE_Y + 4, room.center.Z - 2),
-			Color3.fromRGB(30, 60, 40),
+			Vector3.new(1.8, 1.4, 0.3),
+			CFrame.new(propAt.X, BASE_Y + 3.7, propAt.Z),
+			Color3.fromRGB(40, 90, 60),
 			Enum.Material.Neon
 		)
 	elseif room.id == "Surgery" then
 		newDecor(
-			"SurgeryTable",
+			"InstrumentTable",
 			parent,
-			Vector3.new(2.4, 2, 5.5),
-			CFrame.new(room.center.X, BASE_Y + 1, room.center.Z),
+			Vector3.new(1.6, 2.4, 3),
+			CFrame.new(propAt.X, BASE_Y + 1.2, propAt.Z),
 			Color3.fromRGB(210, 214, 218),
 			Enum.Material.Metal
 		)
 		newDecor(
 			"SurgeryLamp",
 			parent,
-			Vector3.new(2, 0.6, 2),
-			CFrame.new(room.center.X, BASE_Y + WALL_HEIGHT - 1.5, room.center.Z),
+			Vector3.new(3, 0.7, 3),
+			CFrame.new(center.X, BASE_Y + WALL_HEIGHT - 2.5, center.Z),
 			Color3.fromRGB(245, 245, 235),
 			Enum.Material.Neon
 		)
@@ -833,7 +1269,7 @@ local function buildRoom(parent, room)
 		buildReceptionFurniture(structure, room)
 	elseif TREATMENT_ROOM_IDS[room.id] then
 		buildTreatmentMachine(structure, room)
-		buildRoomProp(structure, room)
+		buildWard(structure, room)
 	end
 
 	model.PrimaryPart = floor
@@ -916,7 +1352,7 @@ local function build()
 
 	local hospital = Instance.new("Model")
 	hospital.Name = "Hospital"
-	hospital:SetAttribute("LayoutVersion", 4)
+	hospital:SetAttribute("LayoutVersion", 5)
 	hospital.Parent = Workspace
 
 	buildCorridor(hospital)
