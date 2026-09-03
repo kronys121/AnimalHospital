@@ -112,17 +112,28 @@ local HIDDEN_PARTS = {
 	RightFoot = true,
 }
 
+-- Hair, hats, and every other accessory are an Accoutrement (Accessory's and
+-- Hat's common base class) wrapped around a part named "Handle" - never one
+-- of the named body parts above, so HIDDEN_PARTS alone missed all of them
+-- and hair stayed visible right in front of the camera. Anything whose
+-- parent is an Accoutrement gets hidden regardless of its own name.
+local function isAccessoryPart(instance)
+	local parent = instance.Parent
+	return parent ~= nil and parent:IsA("Accoutrement")
+end
+
+local function hidePart(part)
+	part.LocalTransparencyModifier = 1
+	part:GetPropertyChangedSignal("LocalTransparencyModifier"):Connect(function()
+		part.LocalTransparencyModifier = 1
+	end)
+end
+
 local function hideInstance(instance)
-	if instance:IsA("BasePart") and HIDDEN_PARTS[instance.Name] then
-		instance.LocalTransparencyModifier = 1
-		instance:GetPropertyChangedSignal("LocalTransparencyModifier"):Connect(function()
-			instance.LocalTransparencyModifier = 1
-		end)
+	if instance:IsA("BasePart") and (HIDDEN_PARTS[instance.Name] or isAccessoryPart(instance)) then
+		hidePart(instance)
 	elseif instance:IsA("Decal") then
-		instance.LocalTransparencyModifier = 1
-		instance:GetPropertyChangedSignal("LocalTransparencyModifier"):Connect(function()
-			instance.LocalTransparencyModifier = 1
-		end)
+		hidePart(instance)
 	end
 end
 
