@@ -1,13 +1,35 @@
 --[[
-	Animal Hospital - Stage 2/3 + 5: Reception loop & Treatment Room examination.
+	Animal Hospital - Stage 2/3: the reception loop.
 
-	Server Script. Manages:
-	1. Spawning patients & physical registration at reception.
-	2. Escorting admitted patients into treatment rooms.
-	3. Patient lying down on the examination table/bed.
-	4. Interactive examination ([E] Обследовать).
-	5. Triggering the medicine machine minigame only after examination.
-	6. Patient getting up and leaving to exit if cured.
+	Server Script. Brings patients in one at a time, walks them to the
+	reception counter, runs the physical registration flow, and routes
+	admitted patients into a treatment room through RoomRegistry.
+
+	Where to put it:
+		ServerScriptService -> Script (Server) -> paste this file in,
+		alongside PickupSystem (a sibling ModuleScript it requires).
+
+	Needs, and waits for:
+		Workspace.Hospital                          (BuildHospital.server.lua)
+		ReplicatedStorage.Shared.RoomRegistry
+		ReplicatedStorage.Shared.PatientData
+
+	Creates ReplicatedStorage.AnimalHospital with the RemoteEvents the
+	reception UI listens to, so there is nothing to wire up by hand.
+
+	Patients are anchored models moved with PivotTo along waypoints derived
+	from the markers BuildHospital places. No Humanoid and no physics: a
+	patient can never get stuck on geometry, fall over, or wander off, which
+	matters more than convincing walk animation at this stage.
+
+	Registration is physical, not a UI button: photograph the patient with
+	the desk camera (the photo appears on the desk, pickable and placeable
+	back down), take the photo's information to the computer, collect the
+	printed card from the printer, and hand it to the patient to admit them.
+	Rejecting needs none of that - it is a button right on the counter.
+	Every step is a ProximityPrompt, checked and driven server-side; the
+	client has no say in any of it beyond standing close enough to trigger
+	one.
 ]]
 
 local Workspace = game:GetService("Workspace")
@@ -19,6 +41,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local RoomRegistry = require(Shared:WaitForChild("RoomRegistry"))
 local PatientData = require(Shared:WaitForChild("PatientData"))
 local PickupSystem = require(script.Parent:WaitForChild("PickupSystem"))
+local ShiftState = require(script.Parent:WaitForChild("ShiftState"))
 
 --------------------------------------------------------------------------------
 -- Tuning
@@ -26,7 +49,14 @@ local PickupSystem = require(script.Parent:WaitForChild("PickupSystem"))
 
 local WALK_SPEED = 9
 local NEXT_PATIENT_DELAY = 3
+
+-- Placeholder only. Stage 4 brings the real shift timer and the -1/sec idle
+-- penalty; until then this just stops a forgotten patient from parking at the
+-- counter forever and stalling the loop during a test session.
 local DECISION_TIMEOUT = 90
+
+-- How long to keep trying for a free treatment room before giving up and
+-- sending an admitted patient home.
 local ROOM_WAIT_TIMEOUT = 20
 
 local TWITCH_MIN_GAP, TWITCH_MAX_GAP = 2.0, 4.5
@@ -71,6 +101,11 @@ end
 
 local remotes = ensureRemotes()
 local atCounter = nil
+
+-- Every patient currently inside the building, whichever thread is moving
+-- them. Ending a shift has to be able to clear the floor in one go, and a
+-- patient can be anywhere between the street door and a treatment room.
+local liveActors = {}
 
 --------------------------------------------------------------------------------
 -- World anchors
@@ -520,6 +555,36 @@ local function clearSession()
 	session = nil
 end
 
+-- Called when a shift ends: send everyone home immediately and put the desk
+-- back the way it started, so the next shift begins on an empty floor rather
+-- than inheriting half-registered leftovers.
+local function clearFloor()
+	for actor in pairs(liveActors) do
+		liveActors[actor] = nil
+		actor.idle = false
+		if actor.model then
+			actor.model:Destroy()
+		end
+	end
+
+	if atCounter then
+		remotes.PatientLeft:FireAllClients(atCounter.public.id)
+		atCounter = nil
+	end
+	clearSession()
+
+	if photoItem then
+		PickupSystem.placeDown(photoItem)
+		clearPhoto()
+		PickupSystem.setAvailable(photoItem, false)
+	end
+	if cardItem then
+		PickupSystem.placeDown(cardItem)
+		cardItem.Transparency = 1
+		PickupSystem.setAvailable(cardItem, false)
+	end
+end
+
 local function attachHandoverPrompt(actor)
 	local prompt = Instance.new("ProximityPrompt")
 	prompt.Name = "HandoverPrompt"
@@ -547,8 +612,16 @@ local function waitForDecision(patientId)
 	awaitingPatientId = patientId
 	submitted = nil
 
+	local generation = ShiftState.getGeneration()
 	local deadline = os.clock() + DECISION_TIMEOUT
 	while submitted == nil and os.clock() < deadline do
+		-- The shift can end under this patient (the clock ran out, or sanity
+		-- hit zero). "aborted" is not a decision and must not score.
+		if not ShiftState.isRunning() or ShiftState.getGeneration() ~= generation then
+			awaitingPatientId = nil
+			submitted = nil
+			return "aborted"
+		end
 		task.wait(0.1)
 	end
 
@@ -730,6 +803,7 @@ end
 --------------------------------------------------------------------------------
 
 local function despawn(actor)
+	liveActors[actor] = nil
 	if actor.model then
 		actor.model:Destroy()
 	end
@@ -834,6 +908,7 @@ local function conductExamination(actor, bedPart)
 end
 
 local function escortToTreatment(actor)
+	local generation = ShiftState.getGeneration()
 	local roomId = claimRoom()
 	if not roomId then
 		warn(("[Shift] no free room for %s, sending them home"):format(actor.data.name))
@@ -852,6 +927,10 @@ local function escortToTreatment(actor)
 
 	-- 1. Идём от ресепшена к двери кабинета
 	walkPath(actor, pathCounterToRoom(entryPart))
+	if not actor.model.Parent then
+		despawn(actor)
+		return
+	end
 	faceDirection(actor, Vector3.new(0, 0, world.corridorZ - entryPart.Position.Z))
 
 	local bedPart = findBedInRoom(roomId)
@@ -887,6 +966,13 @@ local function escortToTreatment(actor)
 	-- 5. ТОЛЬКО ПОСЛЕ ОСМОТРА запускаем автомат препаратов и выбор лекарства
 	local room = RoomRegistry.get(roomId)
 	local sent = RoomRegistry.sendPatient(roomId, actor.data, function(outcome)
+		-- A room minigame started in the previous shift can still finish after
+		-- that shift ended; its result belongs to the shift it began in.
+		if not ShiftState.isRunning() or ShiftState.getGeneration() ~= generation then
+			despawn(actor)
+			return
+		end
+
 		remotes.RoomOutcome:FireAllClients({
 			patientId = actor.data.id,
 			patientName = actor.data.name,
@@ -894,6 +980,7 @@ local function escortToTreatment(actor)
 			roomName = room.name,
 			status = outcome.status,
 		})
+		ShiftState.applyRoomOutcome(outcome.status)
 		print(("[Shift] %s in %s -> %s"):format(actor.data.name, roomId, outcome.status))
 
 		if outcome.status == RoomRegistry.Outcome.Cured then
@@ -938,6 +1025,7 @@ local function serveOnePatient()
 		scale = scale,
 		idle = false,
 	}
+	liveActors[actor] = true
 
 	model:PivotTo(CFrame.new(point(world.lobbyX, world.spawnZ) + Vector3.new(0, pivotHeight, 0)))
 	model.Parent = Workspace
@@ -950,6 +1038,12 @@ local function serveOnePatient()
 	)
 
 	walkPath(actor, pathToCounter())
+	if not model.Parent then
+		-- The shift ended while this one was still walking in; clearFloor
+		-- destroyed the model out from under the walk.
+		despawn(actor)
+		return
+	end
 	faceDirection(actor, Vector3.new(-1, 0, 0))
 	startIdleBehaviour(actor)
 	attachHandoverPrompt(actor)
@@ -958,13 +1052,28 @@ local function serveOnePatient()
 	remotes.PatientArrived:FireAllClients(atCounter.public, atCounter.model)
 	resetRegistration(patient, model)
 
+	-- Sanity drains while a patient stands here undecided (after a grace
+	-- period - see ShiftState). Doing the paperwork is not idling; the drain
+	-- stops the moment the decision lands, whichever way it went.
+	ShiftState.setIdle(true)
 	local decision = waitForDecision(patient.id)
+	ShiftState.setIdle(false)
+
 	atCounter = nil
 	clearSession()
 	stopIdleBehaviour(actor)
 
+	if decision == "aborted" then
+		-- The shift ended while this patient was waiting; clearFloor has
+		-- already sent them home, and nothing about them counts.
+		despawn(actor)
+		return
+	end
+
 	local correct = PatientData.isDecisionCorrect(patient, decision)
 	local admitted = decision == "admit"
+
+	ShiftState.applyDecision(decision, correct)
 
 	remotes.DecisionResult:FireAllClients({
 		patientId = patient.id,
@@ -975,6 +1084,14 @@ local function serveOnePatient()
 		traits = PatientData.describeTraits(patient),
 	})
 	remotes.PatientLeft:FireAllClients(patient.id)
+
+	if not ShiftState.isRunning() then
+		-- That decision was the one that ended the shift. clearFloor is
+		-- already emptying the building; do not start a treatment run into a
+		-- shift that is over.
+		despawn(actor)
+		return
+	end
 
 	if admitted and not patient.isAnomaly then
 		task.spawn(escortToTreatment, actor)
@@ -1000,13 +1117,23 @@ local function main()
 	end
 	setupRegistrationFlow()
 
+	ShiftState.onEnded(clearFloor)
+
 	print("[Shift] reception open")
+	ShiftState.start()
+
 	while true do
-		local ran, problem = pcall(serveOnePatient)
-		if not ran then
-			warn(("[Shift] patient failed: %s"):format(tostring(problem)))
+		if ShiftState.isRunning() then
+			local ran, problem = pcall(serveOnePatient)
+			if not ran then
+				warn(("[Shift] patient failed: %s"):format(tostring(problem)))
+			end
+			task.wait(NEXT_PATIENT_DELAY)
+		else
+			-- Between shifts: the results screen is up and the floor is
+			-- empty. Nothing to do until somebody presses "заново".
+			task.wait(0.25)
 		end
-		task.wait(NEXT_PATIENT_DELAY)
 	end
 end
 
