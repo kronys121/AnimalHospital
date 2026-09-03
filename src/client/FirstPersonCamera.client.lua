@@ -21,6 +21,14 @@
 	2. Reading rotation from UserInputService.InputChanged deltas and writing
 	   the camera CFrame ourselves, so nothing in the default camera pipeline
 	   can decide to skip a frame.
+
+	Screens that do need a real cursor (the end-of-shift results screen and
+	its "заново" button) set the attribute "UiFocus" on the LocalPlayer while
+	they are up. While it is true the mouse is released and shown and mouse
+	movement stops turning the camera; the view itself stays exactly where it
+	was, so clearing the attribute drops the player straight back in without
+	a jump. Any later screen can reuse the same attribute - nothing here
+	knows what the UI is.
 ]]
 
 local Players = game:GetService("Players")
@@ -39,6 +47,12 @@ local EYE_OFFSET = Vector3.new(0, 0.5, 0)
 local yaw = 0
 local pitch = 0
 
+local UI_FOCUS_ATTRIBUTE = "UiFocus"
+
+local function uiFocused()
+	return player:GetAttribute(UI_FOCUS_ATTRIBUTE) == true
+end
+
 -- 1. Отключаем перехват мыши у всех кнопок действий.
 ProximityPromptService.PromptShown:Connect(function(prompt)
 	prompt.ClickablePrompt = false
@@ -46,6 +60,9 @@ end)
 
 -- 2. Вращение камеры мышью (не блокируется интерфейсом).
 UserInputService.InputChanged:Connect(function(input, _gameProcessed)
+	if uiFocused() then
+		return
+	end
 	if input.UserInputType == Enum.UserInputType.MouseMovement then
 		yaw = yaw - input.Delta.X * SENSITIVITY
 		pitch = math.clamp(pitch - input.Delta.Y * SENSITIVITY, MIN_PITCH, MAX_PITCH)
@@ -137,8 +154,21 @@ RunService:BindToRenderStep("FirstPersonCameraStep", Enum.RenderPriority.Camera.
 	end
 
 	camera.CameraType = Enum.CameraType.Scriptable
-	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
-	UserInputService.MouseIconEnabled = false
+
+	if uiFocused() then
+		-- Hand the mouse back to the interface, but keep drawing the camera
+		-- from the same yaw/pitch so the view does not move while a panel is
+		-- open.
+		if UserInputService.MouseBehavior ~= Enum.MouseBehavior.Default then
+			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+		end
+		if not UserInputService.MouseIconEnabled then
+			UserInputService.MouseIconEnabled = true
+		end
+	else
+		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+		UserInputService.MouseIconEnabled = false
+	end
 
 	-- Тело поворачивается только вокруг вертикальной оси, камера - и вверх/вниз.
 	root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, yaw, 0)

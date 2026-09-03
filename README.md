@@ -5,10 +5,11 @@ Roblox-игра по мастер-роадмапу из `docs/roadmap.md`. Со�
 
 ## Текущее состояние
 
-Этап 2/3: больница построена (шире, чем раньше), пациенты приходят,
-регистрация — физическая (камера → фото → компьютер → принтер → карточка →
-вручение, отказ отдельной кнопкой), все четыре кабинета лечат по-настоящему
-через автомат с препаратами, вид от первого лица.
+Этап 4: больница построена, пациенты приходят, регистрация — физическая
+(камера → фото → компьютер → принтер → карточка → вручение, отказ отдельной
+кнопкой), все четыре кабинета лечат по-настоящему через автомат с
+препаратами, вид от первого лица. Смена — раунд на пять минут с полоской
+рассудка, экраном результатов и кнопкой «заново».
 
 ## Как запустить
 
@@ -18,18 +19,20 @@ Roblox-игра по мастер-роадмапу из `docs/roadmap.md`. Со�
    - `PatientData` ← `src/shared/PatientData.lua`
 3. В `ServerScriptService` создать:
    - ModuleScript `PickupSystem` ← `src/server/PickupSystem.lua`
+   - ModuleScript `ShiftState` ← `src/server/ShiftState.lua`
    - Script `BuildHospital` ← `src/server/BuildHospital.server.lua`
    - Script `ShiftServer` ← `src/server/ShiftServer.server.lua`
    - Script `TreatmentRooms` ← `src/server/TreatmentRooms.server.lua`
-4. В `StarterPlayer` → `StarterPlayerScripts` создать три `LocalScript`:
+4. В `StarterPlayer` → `StarterPlayerScripts` создать четыре `LocalScript`:
    - `ReceptionClient` ← `src/client/ReceptionClient.client.lua`
    - `FirstPersonCamera` ← `src/client/FirstPersonCamera.client.lua`
    - `TreatmentHud` ← `src/client/TreatmentHud.client.lua`
+   - `ShiftHud` ← `src/client/ShiftHud.client.lua`
 5. Нажать Play.
 
 Имена инстансов важны: скрипты находят друг друга по ним. `ShiftServer`
-требует `PickupSystem` как соседний инстанс, поэтому оба должны лежать прямо
-в `ServerScriptService`, не во вложенных папках. RemoteEvent'ы сервер создаёт
+требует `PickupSystem` и `ShiftState` как соседние инстансы, поэтому все три
+должны лежать прямо в `ServerScriptService`, не во вложенных папках. RemoteEvent'ы сервер создаёт
 сам, руками их заводить не нужно.
 
 Больше ничего делать не нужно: скрипт сам строит всю больницу при старте сервера.
@@ -59,11 +62,13 @@ docs/stage-0-layout.md планировка и координаты этапа 0
 docs/stage-1-room-registry.md  реестр кабинетов, API и подмена заглушек
 docs/stage-2-patients.md       пациенты, фотография, цикл регистрации
 docs/stage-2b-registration-and-treatment.md  физическая регистрация, автоматы, вид от первого лица
+docs/stage-4-sanity-and-shift.md  рассудок, таймер смены, экран результатов
 src/shared             ModuleScript'ы в ReplicatedStorage.Shared
   RoomRegistry.lua          реестр лечебных кабинетов
   PatientData.lua           генератор пациентов и правила решения
 src/server             скрипты в ServerScriptService.Server
   PickupSystem.lua          взять предмет в руки / положить обратно
+  ShiftState.lua            рассудок, часы смены, победа/поражение
   BuildHospital.server.lua  строит больницу при запуске игры
   ShiftServer.server.lua    приход пациентов, физическая регистрация, маршрут в кабинет
   TreatmentRooms.server.lua автомат с препаратами в каждом кабинете
@@ -71,6 +76,7 @@ src/client              скрипты в StarterPlayer.StarterPlayerScripts.Cli
   ReceptionClient.client.lua  информационная карточка у стойки
   FirstPersonCamera.client.lua  вид от первого лица
   TreatmentHud.client.lua       таймер выбора препарата на экране
+  ShiftHud.client.lua           полоска рассудка, таймер, экран результатов
 tools/check-globals.sh  ищет обращения к локальным переменным выше их объявления
 ```
 
@@ -119,8 +125,20 @@ luac5.4 -p src/server/*.lua src/shared/*.lua src/client/*.lua   # синтакс
 Surgery собственные уникальные мини-игры через `RoomRegistry.setHandler` -
 это не отменяется, просто не сделано сейчас.
 
+## Смена (этап 4)
+
+Смена длится пять минут. Рассудок 0-100: +5 за верное решение, -15 за
+неверное, -1 в секунду, пока пациент стоит у стойки и решение по нему не
+принято (не сразу, а через 12 секунд — регистрация у нас физическая и
+занимает время, дословное правило роадмапа делало бы смену непроходимой).
+Вылеченный пациент +3, потерянный -8.
+
+Конец: таймер вышел — победа, рассудок кончился — поражение. В обоих случаях
+экран результатов со сводкой и кнопкой «заново» (или Enter / R). Числа,
+устройство и разбор — в `docs/stage-4-sanity-and-shift.md`.
+
 ## Дальше
 
-Этап 4: Sanity 0-100 с полоской в UI, таймер смены на 5 минут, экран
-результатов. Сейчас за ошибку нет никаких последствий, кроме разбора в
-баннере.
+Этап 6: скример при впуске аномалии (чёрная вспышка, звук, тряска камеры).
+Этап 5 фактически уже сделан — все четыре кабинета лечат, и их исход теперь
+влияет на рассудок.
